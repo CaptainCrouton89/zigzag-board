@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { serve } from '@hono/node-server'
+import { auth } from './auth.js'
 
 for (const k of ['WEB_ORIGIN', 'BETTER_AUTH_SECRET', 'BETTER_AUTH_URL', 'DATABASE_URL']) {
   if (!process.env[k]) {
@@ -23,7 +24,7 @@ app.use('/api/*', cors({
   allowHeaders: ['Content-Type', 'Authorization'],
 }))
 
-// TODO Phase 2: app.on(['POST','GET'], '/api/auth/*', (c) => auth.handler(c.req.raw))
+app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw))
 // TODO Phase 3: app.route('/api/org', orgRoutes); app.route('/api/invite', inviteRoutes)
 
 app.get('/health', (c) => c.json({ ok: true }))
