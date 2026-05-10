@@ -1,6 +1,6 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { organization } from 'better-auth/plugins'
+import { organization, bearer } from 'better-auth/plugins'
 import { db } from './db/client.js'
 import * as schema from './db/schema.js'
 
@@ -24,7 +24,7 @@ export const auth = betterAuth({
       partitioned: true,
     },
   },
-  plugins: [organization()],                       // bearer deferred to Phase 4
+  plugins: [organization(), bearer()],             // path B fallback (cookie path A is primary in v1)
   baseURL: process.env.BETTER_AUTH_URL,
   secret: process.env.BETTER_AUTH_SECRET,
 })
