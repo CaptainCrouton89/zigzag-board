@@ -29,6 +29,34 @@ export async function orgListCommand(mode: OutputMode): Promise<void> {
   )
 }
 
+interface CreateOrgResponse { organizationId: string; inviteUrl: string }
+
+export async function orgCreateCommand(name: string, mode: OutputMode): Promise<void> {
+  const trimmed = name.trim()
+  if (!trimmed) throw new CLIError('usage', 'organization name required')
+  const creds = await requireCredentials()
+  const result = await apiRequest<CreateOrgResponse>(creds, '/api/org', {
+    method: 'POST',
+    attachOrg: false,
+    body: { name: trimmed },
+  })
+  // Auto-switch the CLI's active org to the newly-created one — server-side
+  // setActiveOrganization already ran for the cookie session, but our long-
+  // lived bearer session has its own activeOrganizationId column. Writing
+  // to credentials.json keeps the CLI in sync without a separate `org use`.
+  await setActiveOrg(result.organizationId)
+  printResult(
+    mode,
+    result,
+    [
+      `created organization "${trimmed}"`,
+      `id:         ${result.organizationId}`,
+      `inviteUrl:  ${result.inviteUrl}`,
+      'switched active org to the new one',
+    ],
+  )
+}
+
 export async function orgUseCommand(target: string): Promise<void> {
   const creds = await requireCredentials()
   const me = await apiRequest<MeResponse>(creds, '/api/org/me', { attachOrg: false })

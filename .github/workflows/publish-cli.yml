@@ -1,0 +1,109 @@
+name: Publish CLI
+
+# Auto-publishes @crouton-kit/zigzag to npm whenever cli/package.json's
+# version field changes on main. Workflow_dispatch lets you re-run a
+# publish manually if a release is stuck (e.g. after fixing the npm
+# token). The job is idempotent: if the version in package.json is
+# already on the registry, it skips publish so re-running is safe.
+#
+# Setup once before this workflow can succeed:
+#   1. Create an automation token at https://www.npmjs.com/settings/<user>/tokens
+#      (Type: "Automation"; granular scope on @crouton-kit/zigzag if available)
+#   2. Add it to the repo as secret NPM_TOKEN:
+#      gh secret set NPM_TOKEN --app actions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cli/package.json'
+      - 'cli/src/**'
+      - 'cli/tsconfig.json'
+      - 'cli/README.md'
+      - 'cli/LICENSE'
+      - '.github/workflows/publish-cli.yml'
+  workflow_dispatch:
+
+# Concurrency: queue overlapping pushes so two in-flight publishes can't
+# race on the same version number. cancel-in-progress is intentionally
+# false — we want every push to be evaluated, not skipped.
+concurrency:
+  group: publish-cli
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write    # required for npm provenance attestations
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          # No `cache: npm` — only the cli/ workspace is relevant and it has
+          # its own lockfile; falling back to fetch keeps the cache key
+          # focused and avoids cache thrash from server/ or root changes.
+
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm ci
+
+      # Skip publish if the version already exists on npm. Lets us push
+      # README/source changes without bumping; a real release happens only
+      # when cli/package.json's version field is incremented.
+      - name: Check if version already published
+        id: check
+        working-directory: cli
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          pkg_name=$(node -p "require('./package.json').name")
+          echo "name=$pkg_name" >> "$GITHUB_OUTPUT"
+          echo "version=$local_version" >> "$GITHUB_OUTPUT"
+          # `npm view` exits non-zero if the version isn't found; capture
+          # the result as a boolean we can branch on.
+          if npm view "$pkg_name@$local_version" version > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$pkg_name@$local_version is already published — skipping"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "$pkg_name@$local_version is new — will publish"
+          fi
+
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        working-directory: cli
+        run: npm run build
+
+      - name: Publish
+        if: steps.check.outputs.exists == 'false'
+        working-directory: cli
+        # --provenance attaches a signed attestation linking the published
+        # tarball back to this workflow run, which npmjs.com surfaces as
+        # the "Provenance" section on the package page. Free, automatic
+        # supply-chain hardening.
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Tag the release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          # Lightweight tag (no annotation) — we just want a discoverable
+          # marker per published version. If a tag exists already (manual
+          # bump + workflow_dispatch path), don't fail the run.
+          tag="cli-v$VERSION"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "tag $tag already exists — skipping"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"

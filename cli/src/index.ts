@@ -5,7 +5,7 @@ import { printError, type OutputMode } from './output.js'
 import { loginCommand } from './commands/login.js'
 import { logoutCommand } from './commands/logout.js'
 import { whoamiCommand } from './commands/whoami.js'
-import { orgListCommand, orgUseCommand } from './commands/org.js'
+import { orgCreateCommand, orgListCommand, orgUseCommand } from './commands/org.js'
 import { boardShowCommand } from './commands/board.js'
 import {
   cardAddCommand, cardMoveCommand, cardEditCommand, cardRmCommand,
@@ -68,6 +68,14 @@ orgGroup
   .description('Set the active organization for this CLI session (matched by id then slug)')
   .action(async (target: string) => {
     await orgUseCommand(target)
+  })
+
+orgGroup
+  .command('create <name>')
+  .description('Create a new organization (you become the owner) and switch the CLI to it')
+  .addOption(jsonOpt)
+  .action(async (name: string, opts: { json?: boolean }) => {
+    await orgCreateCommand(name, modeFromOpts(opts))
   })
 
 const boardGroup = program
