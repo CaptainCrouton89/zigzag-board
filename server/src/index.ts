@@ -5,6 +5,7 @@ import { createNodeWebSocket } from '@hono/node-ws'
 import { auth } from './auth.js'
 import orgRoutes from './routes/org.js'
 import inviteRoutes from './routes/invite.js'
+import cliRoutes from './routes/cli.js'
 import { hocuspocus } from './sync/hocuspocus.js'
 
 for (const k of ['WEB_ORIGIN', 'BETTER_AUTH_SECRET', 'BETTER_AUTH_URL', 'DATABASE_URL']) {
@@ -33,6 +34,7 @@ app.use('/api/*', cors({
 app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw))
 app.route('/api/org', orgRoutes)
 app.route('/api/invite', inviteRoutes)
+app.route('/api/cli', cliRoutes)
 
 app.get('/sync', upgradeWebSocket((c) => {
   let conn: ReturnType<typeof hocuspocus.handleConnection> | undefined
