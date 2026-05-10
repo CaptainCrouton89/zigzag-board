@@ -250,6 +250,24 @@ export function Board({
   // M5: zero-lane initial render before WS sync would otherwise produce boardW = -GAP = -18.
   const boardW = Math.max(0, node.lanes.length * (LANE_WIDTH + GAP) - GAP);
 
+  if (node.lanes.length === 0) {
+    return (
+      <div
+        className="relative flex flex-col items-center justify-center gap-3"
+        style={{ minWidth: LANE_WIDTH + 48, minHeight: 6 * RANK_STEP }}
+        ref={boardRef}
+      >
+        <p className="text-[12px] text-text-dim italic">No lanes yet</p>
+        <button
+          onClick={onAddLane}
+          className="px-4 py-2 rounded-lg border border-dashed border-border-strong text-text-dim text-[13px] hover:text-accent hover:border-accent hover:bg-surface transition-all bg-transparent cursor-pointer"
+        >
+          + Add lane
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="relative" style={{ width: boardW, height: boardH }} ref={boardRef}>
       {/* Lane backgrounds + headers */}
