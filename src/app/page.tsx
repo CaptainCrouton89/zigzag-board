@@ -1,147 +1,71 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useRef } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { Sidebar } from '@/components/board/Sidebar'
-import { Breadcrumb } from '@/components/board/Breadcrumb'
-import { Board } from '@/components/board/Board'
-import { useBoard } from '@/lib/board/useBoard'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { authClient } from '@/lib/auth-client'
+import BoardClient from '@/components/BoardClient'
 
-function HomeInner() {
-  // PHASE-6: replace `?orgId=` query-param bootstrap with server-component
-  // session.activeOrganizationId gate. Grep `// PHASE-6:` to find every site.
-  const sp = useSearchParams()
-  const orgId = sp.get('orgId') !== null ? (sp.get('orgId') as string) : ''
+// Phase 6 root gate — client-side per design.md §5.1.
+//
+// Rationale (locked decision; do not re-litigate): better-auth sets the
+// session cookie on Railway with SameSite=None; Secure; Partitioned and no
+// Domain attribute, so it is host-only on *.up.railway.app. The browser
+// never sends it on top-level navigations to *.vercel.app, so a Vercel
+// server-component cannot validate the session via cookies(). It DOES send
+// it on cross-origin XHR with credentials:'include', which is what
+// authClient.useSession() does under the hood. So we gate in the browser.
+//
+// useSession() initial atom state (better-auth 1.6.10, query.mjs:5-11) is
+// { data: null, isPending: true } — i.e. data is null while loading. We
+// MUST guard on isPending before deciding to redirect, otherwise every
+// cold mount races to /login.
+//
+// router.replace must be called inside useEffect (cannot mutate router
+// during render in Next 16 / React 19 strict mode); we early-return a
+// skeleton while the effect is queued.
 
-  // ALL hooks run unconditionally below. `useBoard('')` short-circuits its
-  // provider effect (no WS subscription, no Y.Doc update listener) so the
-  // empty-orgId case is benign at runtime. The `if (!orgId)` guard fires at
-  // the JSX-return site, AFTER every hook has been called this render.
-  const { appState, callbacks } = useBoard(orgId)
-  const wrapRef = useRef<HTMLDivElement>(null)
+export default function RootPage() {
+  const router = useRouter()
+  const { data, isPending } = authClient.useSession()
 
-  // Zoom animation: scale + crossfade. cardEl != null = zooming IN to that card.
-  const animateZoom = useCallback((cardEl: HTMLElement | null) => {
-    const wrap = wrapRef.current
-    if (!wrap) return
-    if (cardEl) {
-      const rect = cardEl.getBoundingClientRect()
-      const wrapRect = wrap.getBoundingClientRect()
-      const ox = rect.left + rect.width / 2 - wrapRect.left
-      const oy = rect.top + rect.height / 2 - wrapRect.top
-      wrap.style.transformOrigin = `${ox}px ${oy}px`
-    } else {
-      wrap.style.transformOrigin = '50% 50%'
-    }
-    wrap.style.transition = 'transform 320ms cubic-bezier(0.55, 0.05, 0.55, 1), opacity 240ms ease 60ms'
-    wrap.style.transform = cardEl ? 'scale(2.6)' : 'scale(0.45)'
-    wrap.style.opacity = '0'
-    setTimeout(() => {
-      wrap.style.transition = 'none'
-      wrap.style.transform = cardEl ? 'scale(0.55)' : 'scale(1.8)'
-      wrap.style.opacity = '0'
-      requestAnimationFrame(() => {
-        wrap.style.transition = 'transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 240ms ease'
-        wrap.style.transform = 'scale(1)'
-        wrap.style.opacity = '1'
-        setTimeout(() => {
-          wrap.style.transition = ''
-          wrap.style.transform = ''
-        }, 360)
-      })
-    }, 320)
-  }, [])
-
-  // Esc to zoom out one level — but skip while editing text
+  // H-NEW-1 fix. Earlier draft used compound boolean aliases (`noSession`,
+  // `noActiveOrg`) for both the effect deps and the render guard. TS 4.4+
+  // aliased-condition narrowing handles only *simple* discriminant aliases
+  // and does NOT propagate through compound boolean aliases — so the final
+  // `data.session.activeOrganizationId` and `data.user.email` reads still
+  // emitted TS18047 ("'data' is possibly 'null'"), and a non-null assertion
+  // would have masked only the inner `?: string`. Inline conditions narrow
+  // natively, so the non-null assertion is no longer needed.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      const active = document.activeElement as HTMLElement | null
-      if (active && (active.isContentEditable || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) return
-      if (appState.path.length > 1) {
-        animateZoom(null)
-        setTimeout(() => callbacks.onZoomTo(appState.path.length - 2), 320)
-      }
+    if (isPending) return
+    if (data === null) {
+      router.replace('/login')
+      return
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [appState.path, animateZoom, callbacks])
+    if (data.session.activeOrganizationId == null) {
+      router.replace('/onboarding')
+    }
+  }, [isPending, data, router])
 
-  const handleZoomIn = useCallback((cardId: string) => {
-    const cardEl = document.querySelector<HTMLElement>(`[data-id="${cardId}"]`)
-    animateZoom(cardEl)
-    setTimeout(() => callbacks.onZoomIn(cardId), 320)
-  }, [animateZoom, callbacks])
-
-  const handleNavigate = useCallback((pathIdx: number) => {
-    if (pathIdx >= appState.path.length - 1) return
-    animateZoom(null)
-    setTimeout(() => callbacks.onZoomTo(pathIdx), 320)
-  }, [appState.path, animateZoom, callbacks])
-
-  // ALL hooks above. The early-return for missing orgId comes ONLY as a JSX
-  // fallback at the bottom — never above a hook call.
-  if (!orgId) {
-    return (
-      <div className="flex items-center justify-center h-screen text-text-muted text-sm">
-        No org selected. Append <code className="bg-bg-soft px-1 rounded mx-1">?orgId=&lt;orgId&gt;</code> to the URL.
-      </div>
-    )
+  if (isPending || data === null) {
+    // Non-flashing skeleton (R8.1.2). No board chrome, no "/login" link, no
+    // text — just bg-bg so any paint that occurs reads as a continuation of
+    // the next route's background. Sub-200ms on warm cache; cap is 1s on
+    // slow 3G (see R-RG-1' below).
+    return <main className="min-h-screen bg-bg" aria-busy="true" />
+  }
+  if (data.session.activeOrganizationId == null) {
+    // Same skeleton — the effect above will router.replace('/onboarding').
+    return <main className="min-h-screen bg-bg" aria-busy="true" />
   }
 
+  // TS narrows `data` to non-null after the first guard and
+  // `activeOrganizationId` to `string` after the `== null` guard (which
+  // covers both `null` and `undefined`). No non-null assertion needed.
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
-      <header className="px-9 py-3 border-b border-border flex items-center justify-between gap-8 bg-bg">
-        <Breadcrumb root={appState.root} path={appState.path} onNavigate={handleNavigate} />
-        <div className="flex items-center gap-4 text-[11px] text-text-muted">
-          <span className="inline-flex items-center gap-[6px]">
-            <span className="inline-block w-[22px] h-[2px] rounded bg-accent" />
-            priority weave (sagas only)
-          </span>
-          <span className="inline-flex items-center gap-[6px]">
-            <kbd className="font-[inherit] text-[10.5px] px-[5px] py-[1px] rounded bg-bg-soft border border-border text-text">esc</kbd>
-            zoom out
-          </span>
-          <span>click card → zoom in</span>
-        </div>
-      </header>
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          root={appState.root}
-          path={appState.path}
-          onAddPrinciple={callbacks.onAddPrinciple}
-          onSetPrinciple={callbacks.onSetPrinciple}
-          onRemovePrinciple={callbacks.onRemovePrinciple}
-        />
-        <main className="flex-1 overflow-auto p-9">
-          <div ref={wrapRef} className="w-max mx-auto">
-            <Board
-              appState={appState}
-              onAddCard={callbacks.onAddCard}
-              onMoveCard={callbacks.onMoveCard}
-              onSetStatus={callbacks.onSetStatus}
-              onRevertStatus={callbacks.onRevertStatus}
-              onSetCardTitle={callbacks.onSetCardTitle}
-              onAddLane={callbacks.onAddLane}
-              onToggleLaneType={callbacks.onToggleLaneType}
-              onSetLaneTitle={callbacks.onSetLaneTitle}
-              onSetLaneStance={callbacks.onSetLaneStance}
-              onSetLaneSort={callbacks.onSetLaneSort}
-              onRestoreArchived={callbacks.onRestoreArchived}
-              onSetOpenArchive={callbacks.onSetOpenArchive}
-              onZoomIn={handleZoomIn}
-            />
-          </div>
-        </main>
-      </div>
-    </div>
-  )
-}
-
-export default function Home() {
-  return (
-    <Suspense fallback={null}>
-      <HomeInner />
-    </Suspense>
+    <BoardClient
+      orgId={data.session.activeOrganizationId}
+      userEmail={data.user.email}
+    />
   )
 }
