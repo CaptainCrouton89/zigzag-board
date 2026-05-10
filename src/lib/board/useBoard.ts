@@ -179,16 +179,21 @@ export function useBoard(orgId: string): { appState: AppState; callbacks: BoardC
     setOpenArchive(null)
   }, [])
 
+  const onSetPath = useCallback<BoardCallbacks['onSetPath']>((newPath) => {
+    setPath(newPath.length > 0 ? newPath : ['root'])
+    setOpenArchive(null)
+  }, [])
+
   const callbacks = useMemo<BoardCallbacks>(() => ({
     onAddCard, onMoveCard, onSetStatus, onRevertStatus, onSetCardTitle,
     onAddLane, onToggleLaneType, onSetLaneTitle, onSetLaneStance, onSetLaneSort,
     onAddPrinciple, onSetPrinciple, onRemovePrinciple, onRestoreArchived,
-    onSetOpenArchive, onZoomIn, onZoomTo,
+    onSetOpenArchive, onZoomIn, onZoomTo, onSetPath,
   }), [
     onAddCard, onMoveCard, onSetStatus, onRevertStatus, onSetCardTitle,
     onAddLane, onToggleLaneType, onSetLaneTitle, onSetLaneStance, onSetLaneSort,
     onAddPrinciple, onSetPrinciple, onRemovePrinciple, onRestoreArchived,
-    onSetOpenArchive, onZoomIn, onZoomTo,
+    onSetOpenArchive, onZoomIn, onZoomTo, onSetPath,
   ])
 
   return { appState, callbacks }

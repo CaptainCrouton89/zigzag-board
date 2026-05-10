@@ -13,12 +13,42 @@ interface BoardClientProps {
   userEmail: string
 }
 
+// `history.state` shape carries router metadata from Next; merge our zoomPath
+// into it without clobbering anything else the router stashed.
+type HistoryWithZoom = { zoomPath?: string[] } & Record<string, unknown>
+
+function readZoomPath(): string[] | null {
+  if (typeof window === 'undefined') return null
+  const s = window.history.state as HistoryWithZoom | null
+  const zp = s?.zoomPath
+  return Array.isArray(zp) && zp.length > 0 ? zp : null
+}
+
+function writeZoomPath(zoomPath: string[], mode: 'push' | 'replace') {
+  if (typeof window === 'undefined') return
+  const prev = (window.history.state as HistoryWithZoom | null) ?? {}
+  const next = { ...prev, zoomPath }
+  if (mode === 'push') window.history.pushState(next, '')
+  else window.history.replaceState(next, '')
+}
+
+function samePath(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
   const router = useRouter()
   const { appState, callbacks } = useBoard(orgId)
   const wrapRef = useRef<HTMLDivElement>(null)
   const { data: activeOrg } = authClient.useActiveOrganization()
   const orgName = activeOrg ? activeOrg.name : 'Board'
+
+  // Mirror appState.path so popstate / esc / breadcrumb handlers can read the
+  // current depth without re-binding on every zoom.
+  const pathRef = useRef(appState.path)
+  useEffect(() => { pathRef.current = appState.path }, [appState.path])
 
   // Zoom animation: scale + crossfade. cardEl != null = zooming IN to that card.
   const animateZoom = useCallback((cardEl: HTMLElement | null) => {
@@ -52,32 +82,71 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
     }, 320)
   }, [])
 
+  // Seed history state on mount so the current entry carries the initial
+  // zoomPath. If the entry already has one (e.g., user came back to this page
+  // via Next router and the entry was preserved), restore it into appState.
+  useEffect(() => {
+    const existing = readZoomPath()
+    if (existing) {
+      if (!samePath(existing, pathRef.current)) {
+        callbacks.onSetPath(existing)
+      }
+    } else {
+      writeZoomPath(pathRef.current, 'replace')
+    }
+    // run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Browser back/forward → drive zoom from history.state. Esc and breadcrumb
+  // clicks both delegate to history.go(...), so they also flow through here.
+  useEffect(() => {
+    const onPop = () => {
+      const next = readZoomPath() ?? ['root']
+      const cur = pathRef.current
+      if (samePath(next, cur)) return
+      const goingDeeper = next.length > cur.length
+      if (goingDeeper) {
+        const targetId = next[next.length - 1]
+        const cardEl = document.querySelector<HTMLElement>(`[data-id="${targetId}"]`)
+        animateZoom(cardEl)
+      } else {
+        animateZoom(null)
+      }
+      setTimeout(() => callbacks.onSetPath(next), 320)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [animateZoom, callbacks])
+
   // Esc to zoom out one level — but skip while editing text
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       const active = document.activeElement as HTMLElement | null
       if (active && (active.isContentEditable || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) return
-      if (appState.path.length > 1) {
-        animateZoom(null)
-        setTimeout(() => callbacks.onZoomTo(appState.path.length - 2), 320)
+      if (pathRef.current.length > 1) {
+        window.history.back()
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [appState.path, animateZoom, callbacks])
+  }, [])
 
   const handleZoomIn = useCallback((cardId: string) => {
     const cardEl = document.querySelector<HTMLElement>(`[data-id="${cardId}"]`)
     animateZoom(cardEl)
+    const newPath = [...pathRef.current, cardId]
+    writeZoomPath(newPath, 'push')
     setTimeout(() => callbacks.onZoomIn(cardId), 320)
   }, [animateZoom, callbacks])
 
   const handleNavigate = useCallback((pathIdx: number) => {
-    if (pathIdx >= appState.path.length - 1) return
-    animateZoom(null)
-    setTimeout(() => callbacks.onZoomTo(pathIdx), 320)
-  }, [appState.path, animateZoom, callbacks])
+    const cur = pathRef.current
+    if (pathIdx >= cur.length - 1) return
+    const delta = pathIdx - (cur.length - 1) // negative
+    window.history.go(delta) // popstate listener handles animation + setPath
+  }, [])
 
   // R-RG-3: signOut → push order is critical. Server clears the cookie inside
   // signOut(); only after that does the next nav see a missing cookie. If we

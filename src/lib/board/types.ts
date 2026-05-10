@@ -57,5 +57,6 @@ export interface BoardCallbacks {
   onSetOpenArchive: (laneId: string | null) => void;
   onZoomIn: (cardId: string) => void;
   onZoomTo: (pathIdx: number) => void;
+  onSetPath: (path: string[]) => void;
 }
 
