@@ -6,6 +6,7 @@ import { auth } from './auth.js'
 import orgRoutes from './routes/org.js'
 import inviteRoutes from './routes/invite.js'
 import cliRoutes from './routes/cli.js'
+import boardRoutes from './routes/board.js'
 import { hocuspocus } from './sync/hocuspocus.js'
 
 for (const k of ['WEB_ORIGIN', 'BETTER_AUTH_SECRET', 'BETTER_AUTH_URL', 'DATABASE_URL']) {
@@ -28,13 +29,18 @@ app.use('/api/*', cors({
   origin: [process.env.WEB_ORIGIN!],
   credentials: true,
   allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
+  // X-Org-Id is sent by /api/board/* requests to disambiguate which board
+  // a long-lived CLI bearer session targets. Adding it here lets the
+  // browser preflight succeed when the web app eventually issues the
+  // same header (currently web uses session.activeOrganizationId).
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Org-Id'],
 }))
 
 app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw))
 app.route('/api/org', orgRoutes)
 app.route('/api/invite', inviteRoutes)
 app.route('/api/cli', cliRoutes)
+app.route('/api/board', boardRoutes)
 
 app.get('/sync', upgradeWebSocket((c) => {
   let conn: ReturnType<typeof hocuspocus.handleConnection> | undefined
