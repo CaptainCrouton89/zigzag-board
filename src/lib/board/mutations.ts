@@ -89,6 +89,41 @@ function siblingsByLane(parent: Y.Map<unknown>, laneId: string): Y.Map<unknown>[
   return arr
 }
 
+// Saga cards across ALL saga lanes share one global "zigzag" rank space.
+// Drop targets in saga lanes are computed against `getSagaCards(node).length`
+// (Board.tsx), so addCard/moveCard for saga destinations must resolve
+// neighbors against this global list — not the per-lane sibling list — or
+// drops collapse to the destination lane's local end.
+function sagaSiblings(parent: Y.Map<unknown>): Y.Map<unknown>[] {
+  const lanes = parent.get('lanes')
+  const cards = parent.get('cards')
+  if (!(lanes instanceof Y.Map) || !(cards instanceof Y.Map)) return []
+  const sagaLaneIds = new Set<string>()
+  ;(lanes as Y.Map<Y.Map<unknown>>).forEach((laneM, lid) => {
+    if (laneM.get('type') === 'saga') sagaLaneIds.add(lid)
+  })
+  const arr: Y.Map<unknown>[] = []
+  ;(cards as Y.Map<Y.Map<unknown>>).forEach(c => {
+    const lid = c.get('laneId')
+    if (typeof lid === 'string' && sagaLaneIds.has(lid)) arr.push(c)
+  })
+  arr.sort((a, b) => {
+    const ao = String(a.get('order')); const bo = String(b.get('order'))
+    if (ao < bo) return -1
+    if (ao > bo) return 1
+    const aid = String(a.get('id')); const bid = String(b.get('id'))
+    return aid < bid ? -1 : aid > bid ? 1 : 0
+  })
+  return arr
+}
+
+function isSagaLane(parent: Y.Map<unknown>, laneId: string): boolean {
+  const lanes = parent.get('lanes')
+  if (!(lanes instanceof Y.Map)) return false
+  const lane = (lanes as Y.Map<Y.Map<unknown>>).get(laneId)
+  return lane?.get('type') === 'saga'
+}
+
 function findCardYMap(
   parent: Y.Map<unknown>,
   cardId: string,
@@ -178,7 +213,11 @@ export function addCard(
     const lane = (lanes as Y.Map<Y.Map<unknown>>).get(laneId)
     if (!lane) return
 
-    const sibs = siblingsByLane(parent, laneId)
+    // Saga drops carry a GLOBAL zigzag rank; backlog drops carry a lane-local
+    // rank. Match Board.tsx's computeDropTarget by partitioning here.
+    const sibs = isSagaLane(parent, laneId)
+      ? sagaSiblings(parent)
+      : siblingsByLane(parent, laneId)
     const clamped = Math.max(0, Math.min(sibs.length, rank))
     const prev = clamped > 0 ? sibs[clamped - 1] : null
     const next = clamped < sibs.length ? sibs[clamped] : null
@@ -223,10 +262,15 @@ export function moveCard(
     if (!(lanes instanceof Y.Map)) return
     if (!(lanes as Y.Map<Y.Map<unknown>>).get(newLaneId)) return
 
-    // Recompute siblings AFTER conceptually removing this card from the lane it
-    // currently sits in (so cross-lane and same-lane moves both behave
-    // correctly — sibling list excludes the card being moved).
-    const sibs = siblingsByLane(parent, newLaneId).filter(s => s.get('id') !== cardId)
+    // Recompute siblings AFTER conceptually removing this card from its
+    // current lane (so cross-lane and same-lane moves behave consistently —
+    // sibling list excludes the card being moved). Saga destinations resolve
+    // against the GLOBAL saga ordering (one zigzag rank space across all saga
+    // lanes); backlog destinations resolve against lane-local siblings only.
+    const sibs = (isSagaLane(parent, newLaneId)
+      ? sagaSiblings(parent)
+      : siblingsByLane(parent, newLaneId)
+    ).filter(s => s.get('id') !== cardId)
     const clamped = Math.max(0, Math.min(sibs.length, newRank))
     const prev = clamped > 0 ? sibs[clamped - 1] : null
     const next = clamped < sibs.length ? sibs[clamped] : null
