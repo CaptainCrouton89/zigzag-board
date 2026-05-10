@@ -1,4 +1,7 @@
-import { AppState, Action, Card, SortMode } from './types';
+// Phase 5 transitional: this reducer is no longer reachable from page.tsx.
+// It stays in tree as the canonical mutation spec for comparison during
+// verification. Phase 7 deletes. Adapted to compile against the post-T2 types.
+import { AppState, Action, Card, Lane, SortMode } from './types';
 
 let nextId = 2000;
 export const newId = (prefix = 'n') => `${prefix}${nextId++}`;
@@ -37,15 +40,18 @@ export function getNodeByPath(root: Card, path: string[]): Card {
 
 export function ensureLanes(n: Card): void {
   if (!n.lanes || n.lanes.length === 0) {
-    n.lanes = [{ id: newId('l'), title: 'Next steps', type: 'saga' }];
+    const fallbackLane: Lane = { id: newId('l'), title: 'Next steps', type: 'saga', order: 'a0' };
+    n.lanes = [fallbackLane];
   }
   n.cards.forEach(c => {
-    if (c.lane >= n.lanes.length) c.lane = 0;
+    if (!n.lanes.some(l => l.id === c.laneId)) {
+      c.laneId = n.lanes[0].id;
+    }
   });
 }
 
 // Reorders lanes so backlogs always come last (visual rule).
-// Remaps every card's and archived item's lane index accordingly.
+// Remaps every card's and archived item's laneId accordingly.
 export function normalizeLanesOrder(n: Card): void {
   if (!n.lanes || n.lanes.length < 2) return;
   const ranked = n.lanes.map((lane, oldIdx) => ({ lane, oldIdx, isSaga: lane.type === 'saga' }));
@@ -54,31 +60,20 @@ export function normalizeLanesOrder(n: Card): void {
   const newOrder = [...sagas, ...backlogs];
   // Already in order? No-op.
   if (newOrder.every((r, i) => r.oldIdx === i)) return;
-  const remap = new Map<number, number>();
-  newOrder.forEach((r, i) => remap.set(r.oldIdx, i));
+  // Build id-based remap (laneId stays stable — only visual position changes).
   n.lanes = newOrder.map(r => r.lane);
-  n.cards.forEach(c => {
-    const ni = remap.get(c.lane);
-    if (ni !== undefined) c.lane = ni;
-  });
-  n.archived.forEach(a => {
-    const ni = remap.get(a.lane);
-    if (ni !== undefined) a.lane = ni;
-  });
+  // laneId is now a string lane id (stable), not a positional index — no remap needed.
 }
 
 export function getSagaCards(node: Card): Card[] {
-  return node.cards.filter(c => node.lanes[c.lane]?.type === 'saga');
+  const sagaIds = new Set(node.lanes.filter(l => l.type === 'saga').map(l => l.id));
+  return node.cards.filter(c => sagaIds.has(c.laneId));
 }
 
-export function getBacklogCards(node: Card, laneIdx: number): Card[] {
-  const lane = node.lanes[laneIdx];
-  if (!lane) return [];
-  const cards = node.cards.filter(c => c.lane === laneIdx);
-  if (lane.sort === 'newest') return [...cards].sort((a, b) => b.createdAt - a.createdAt);
-  if (lane.sort === 'oldest') return [...cards].sort((a, b) => a.createdAt - b.createdAt);
-  return cards; // 'manual' or undefined — preserve array order
-}
+// `getBacklogCards` removed: its old `(node, laneIdx)` signature is stale
+// under the laneId-keyed schema (Phase 5) and the reducer in this file does
+// not call it. Board.tsx defines a local `(node, laneId)` version for its
+// render path. Phase 7 deletes this whole reducer file.
 
 function deepClone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
@@ -100,7 +95,8 @@ export function reducer(state: AppState, action: Action): AppState {
         id: newId('c'),
         title,
         status: 'todo',
-        lane: laneIdx,
+        laneId: lane.id,
+        order: 'a0',
         createdAt: Date.now(),
         lanes: [],
         cards: [],
@@ -111,7 +107,7 @@ export function reducer(state: AppState, action: Action): AppState {
       if (lane.type === 'saga') {
         filtered = getSagaCards(cur);
       } else {
-        filtered = cur.cards.filter(c => c.lane === laneIdx);
+        filtered = cur.cards.filter(c => c.laneId === lane.id);
       }
       let insertAt: number;
       if (rank >= filtered.length) {
@@ -128,14 +124,14 @@ export function reducer(state: AppState, action: Action): AppState {
       const cardIdx = cur.cards.findIndex(c => c.id === cardId);
       if (cardIdx < 0) return state;
       const [card] = cur.cards.splice(cardIdx, 1);
-      card.lane = newLaneIdx;
       const newLane = cur.lanes[newLaneIdx];
       if (!newLane) { cur.cards.splice(cardIdx, 0, card); return state; }
+      card.laneId = newLane.id;
       let filtered: Card[];
       if (newLane.type === 'saga') {
         filtered = getSagaCards(cur);
       } else {
-        filtered = cur.cards.filter(c => c.lane === newLaneIdx);
+        filtered = cur.cards.filter(c => c.laneId === newLane.id);
       }
       const clamped = Math.max(0, Math.min(filtered.length, newRank));
       let insertAt: number;
@@ -157,7 +153,7 @@ export function reducer(state: AppState, action: Action): AppState {
         card.status = 'done';
         const idx = cur.cards.indexOf(card);
         cur.cards.splice(idx, 1);
-        cur.archived.push({ id: card.id, title: card.title, lane: card.lane, node: card });
+        cur.archived.push({ id: card.id, title: card.title, laneId: card.laneId, node: card });
         cloned.openArchive = null;
       }
       return cloned;
@@ -178,7 +174,7 @@ export function reducer(state: AppState, action: Action): AppState {
     }
 
     case 'ADD_LANE': {
-      cur.lanes.push({ id: newId('l'), title: 'New direction', type: 'saga', stance: '' });
+      cur.lanes.push({ id: newId('l'), title: 'New direction', type: 'saga', stance: '', order: 'a0' });
       normalizeLanesOrder(cur);
       return cloned;
     }
@@ -247,14 +243,16 @@ export function reducer(state: AppState, action: Action): AppState {
       const [archived] = cur.archived.splice(aIdx, 1);
       const restored = archived.node;
       restored.status = 'todo';
-      restored.lane = archived.lane;
+      restored.laneId = archived.laneId;
       cur.cards.unshift(restored);
       cloned.openArchive = null;
       return cloned;
     }
 
     case 'SET_OPEN_ARCHIVE': {
-      cloned.openArchive = action.laneIdx;
+      // Action.laneIdx is number | null; openArchive is now string | null.
+      // Transitional: convert to string (Phase 7 removes this reducer).
+      cloned.openArchive = action.laneIdx !== null ? String(action.laneIdx) : null;
       return cloned;
     }
 

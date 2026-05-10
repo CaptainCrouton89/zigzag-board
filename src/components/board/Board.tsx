@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { Card as CardType, AppState, SortMode } from '@/lib/board/types';
-import { getNodeByPath, ensureLanes, getSagaCards, getBacklogCards, cycleSortMode } from '@/lib/board/state';
+import { getNodeByPath, cycleSortMode } from '@/lib/board/state';
 import { Card } from './Card';
 import { Lane } from './Lane';
 import { ZigzagPath } from './ZigzagPath';
@@ -18,24 +18,40 @@ interface DragState {
 
 interface Props {
   appState: AppState;
-  onAddCard: (laneIdx: number, rank: number, title: string) => void;
-  onMoveCard: (cardId: string, newLaneIdx: number, newRank: number) => void;
+  onAddCard: (laneId: string, rank: number, title: string) => void;
+  onMoveCard: (cardId: string, newLaneId: string, newRank: number) => void;
   onSetStatus: (cardId: string) => void;
   onRevertStatus: (cardId: string) => void;
   onSetCardTitle: (cardId: string, title: string) => void;
   onAddLane: () => void;
-  onToggleLaneType: (laneIdx: number) => void;
-  onSetLaneTitle: (laneIdx: number, title: string) => void;
-  onSetLaneStance: (laneIdx: number, stance: string) => void;
-  onSetLaneSort: (laneIdx: number, sort: SortMode) => void;
+  onToggleLaneType: (laneId: string) => void;
+  onSetLaneTitle: (laneId: string, title: string) => void;
+  onSetLaneStance: (laneId: string, stance: string) => void;
+  onSetLaneSort: (laneId: string, sort: SortMode) => void;
   onRestoreArchived: (id: string) => void;
-  onSetOpenArchive: (laneIdx: number | null) => void;
+  onSetOpenArchive: (laneId: string | null) => void;
   onZoomIn: (cardId: string) => void;
 }
 
 interface NewCardInput {
-  laneIdx: number;
+  laneId: string;
   rank: number;
+}
+
+// Pure helpers replacing the deleted getSagaCards/getBacklogCards imports.
+// All data comes from snapshot (already sorted saga-first by buildSnapshot).
+function getSagaCards(node: CardType): CardType[] {
+  const sagaIds = new Set(node.lanes.filter(l => l.type === 'saga').map(l => l.id));
+  return node.cards.filter(c => sagaIds.has(c.laneId));
+}
+
+function getBacklogCards(node: CardType, laneId: string): CardType[] {
+  const lane = node.lanes.find(l => l.id === laneId);
+  if (!lane) return [];
+  const cards = node.cards.filter(c => c.laneId === laneId);
+  if (lane.sort === 'newest') return [...cards].sort((a, b) => b.createdAt - a.createdAt);
+  if (lane.sort === 'oldest') return [...cards].sort((a, b) => a.createdAt - b.createdAt);
+  return cards;
 }
 
 function computeDropTarget(
@@ -43,23 +59,25 @@ function computeDropTarget(
   clientY: number,
   boardEl: HTMLDivElement,
   node: CardType,
-): { lane: number; rank: number } {
+): { laneId: string; rank: number } {
   const boardRect = boardEl.getBoundingClientRect();
   const x = clientX - boardRect.left;
   const y = clientY - boardRect.top - HEADER_H;
-  const lane = Math.max(0, Math.min(node.lanes.length - 1, Math.floor(x / (LANE_WIDTH + GAP))));
-  const targetLane = node.lanes[lane];
+  const i = Math.max(0, Math.min(node.lanes.length - 1, Math.floor(x / (LANE_WIDTH + GAP))));
+  const targetLane = node.lanes[i];
+  if (!targetLane) return { laneId: '', rank: 0 };
+  const targetLaneId = targetLane.id;
   let filteredLen: number;
   let step: number;
   if (targetLane.type === 'saga') {
     filteredLen = getSagaCards(node).length;
     step = RANK_STEP;
   } else {
-    filteredLen = node.cards.filter(c => c.lane === lane).length;
+    filteredLen = node.cards.filter(c => c.laneId === targetLaneId).length;
     step = COMPACT_STEP;
   }
   const rank = Math.max(0, Math.min(filteredLen, Math.floor(y / step)));
-  return { lane, rank };
+  return { laneId: targetLaneId, rank };
 }
 
 export function Board({
@@ -84,8 +102,8 @@ export function Board({
   const newCardInputRef = useRef<HTMLTextAreaElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
 
+  // R-FE-9: ensureLanes call deleted — Phase-4 server seed is the authoritative source.
   const node = getNodeByPath(appState.root, appState.path);
-  ensureLanes(node);
 
   const sagaCards = getSagaCards(node);
 
@@ -108,6 +126,14 @@ export function Board({
     dragRef.current = initial;
     setDrag(initial);
 
+    // Track the last (laneId, rank) sent to onMoveCard to avoid issuing
+    // duplicate Y.Doc transactions: the final pointermove and the immediately-
+    // following pointerup almost always resolve to the same drop target,
+    // which would otherwise trigger two transacts → two snapshot rebuilds →
+    // two peer broadcasts per drop.
+    let lastLaneId: string | null = null;
+    let lastRank = -1;
+
     const cleanup = () => {
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
@@ -118,7 +144,6 @@ export function Board({
     };
 
     const onMove = (me: PointerEvent) => {
-      // If no buttons held (pointerup fired outside the window), clean up.
       if (me.buttons === 0) {
         cleanup();
         return;
@@ -131,9 +156,12 @@ export function Board({
       dragRef.current = next;
       setDrag(next);
 
-      // Live reorder
       const target = computeDropTarget(me.clientX, me.clientY, b, node);
-      onMoveCard(d.cardId, target.lane, target.rank);
+      if (target.laneId !== lastLaneId || target.rank !== lastRank) {
+        lastLaneId = target.laneId;
+        lastRank = target.rank;
+        onMoveCard(d.cardId, target.laneId, target.rank);
+      }
     };
 
     const onUp = (ue: PointerEvent) => {
@@ -153,7 +181,9 @@ export function Board({
       cleanup();
       if (b) {
         const target = computeDropTarget(ue.clientX, ue.clientY, b, node);
-        onMoveCard(cardId, target.lane, target.rank);
+        if (target.laneId !== lastLaneId || target.rank !== lastRank) {
+          onMoveCard(cardId, target.laneId, target.rank);
+        }
       }
     };
 
@@ -177,22 +207,22 @@ export function Board({
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
-  function handleSagaLaneClick(e: React.MouseEvent, laneIdx: number) {
+  function handleSagaLaneClick(e: React.MouseEvent, laneId: string) {
     const board = boardRef.current;
     if (!board) return;
-    const lane = node.lanes[laneIdx];
+    const lane = node.lanes.find(l => l.id === laneId);
     if (!lane) return;
     const boardRect = board.getBoundingClientRect();
     const y = e.clientY - boardRect.top - HEADER_H;
     const filteredLen = getSagaCards(node).length;
     const rank = Math.min(Math.max(0, Math.floor(y / RANK_STEP)), filteredLen);
-    setNewCard({ laneIdx, rank });
+    setNewCard({ laneId, rank });
     setTimeout(() => newCardInputRef.current?.focus(), 0);
   }
 
-  function handleBacklogAdd(laneIdx: number) {
-    const filteredLen = node.cards.filter(c => c.lane === laneIdx).length;
-    setNewCard({ laneIdx, rank: filteredLen }); // append to end
+  function handleBacklogAdd(laneId: string) {
+    const filteredLen = node.cards.filter(c => c.laneId === laneId).length;
+    setNewCard({ laneId, rank: filteredLen }); // append to end
     setTimeout(() => newCardInputRef.current?.focus(), 0);
   }
 
@@ -200,7 +230,7 @@ export function Board({
     const val = newCardInputRef.current?.value.trim();
     setNewCard(null);
     if (val && newCard) {
-      onAddCard(newCard.laneIdx, newCard.rank, val);
+      onAddCard(newCard.laneId, newCard.rank, val);
     }
   }
 
@@ -210,14 +240,15 @@ export function Board({
 
   // Board dimensions — based on saga rank count; backlog lanes flow naturally.
   const sagaH = Math.max(sagaCards.length, 6) * RANK_STEP;
-  const backlogRowsMax = node.lanes.reduce((max, lane, i) => {
+  const backlogRowsMax = node.lanes.reduce((max, lane) => {
     if (lane.type !== 'backlog') return max;
-    return Math.max(max, getBacklogCards(node, i).length);
+    return Math.max(max, getBacklogCards(node, lane.id).length);
   }, 0);
   const backlogH = backlogRowsMax * COMPACT_STEP + 24;
   const bodyH = Math.max(sagaH, backlogH, 6 * RANK_STEP);
   const boardH = HEADER_H + bodyH + 24;
-  const boardW = node.lanes.length * (LANE_WIDTH + GAP) - GAP;
+  // M5: zero-lane initial render before WS sync would otherwise produce boardW = -GAP = -18.
+  const boardW = Math.max(0, node.lanes.length * (LANE_WIDTH + GAP) - GAP);
 
   return (
     <div className="relative" style={{ width: boardW, height: boardH }} ref={boardRef}>
@@ -228,12 +259,12 @@ export function Board({
           lane={lane}
           laneIdx={i}
           archived={node.archived}
-          isArchiveOpen={appState.openArchive === i}
-          onToggleType={() => onToggleLaneType(i)}
-          onSetTitle={title => onSetLaneTitle(i, title)}
-          onSetStance={stance => onSetLaneStance(i, stance)}
-          onCycleSort={() => onSetLaneSort(i, cycleSortMode(lane.sort))}
-          onToggleArchive={() => onSetOpenArchive(appState.openArchive === i ? null : i)}
+          isArchiveOpen={appState.openArchive === lane.id}
+          onToggleType={() => onToggleLaneType(lane.id)}
+          onSetTitle={title => onSetLaneTitle(lane.id, title)}
+          onSetStance={stance => onSetLaneStance(lane.id, stance)}
+          onCycleSort={() => onSetLaneSort(lane.id, cycleSortMode(lane.sort))}
+          onToggleArchive={() => onSetOpenArchive(appState.openArchive === lane.id ? null : lane.id)}
           onRestoreArchived={onRestoreArchived}
           onAddLane={onAddLane}
           isLast={i === node.lanes.length - 1}
@@ -254,24 +285,23 @@ export function Board({
               height: bodyH,
               zIndex: 0,
             }}
-            onClick={e => handleSagaLaneClick(e, i)}
+            onClick={e => handleSagaLaneClick(e, lane.id)}
           />
         ) : null,
       )}
 
       {/* Zigzag SVG (under cards) */}
-      <ZigzagPath sagaCards={sagaCards} boardRef={boardRef} />
+      <ZigzagPath sagaCards={sagaCards} lanes={node.lanes} boardRef={boardRef} />
 
       {/* Saga cards (absolute at board level, ranked) */}
-      {sagaCards.map(card => {
-        const rankIdx = sagaCards.indexOf(card);
+      {sagaCards.map((card, rankIdx) => {
         const isDragging = drag?.cardId === card.id;
         return (
           <Card
             key={card.id}
             card={card}
             isSaga={true}
-            laneIdx={card.lane}
+            laneIdx={node.lanes.findIndex(l => l.id === card.laneId)}
             rankIdx={rankIdx}
             isDragging={isDragging}
             drag={isDragging ? drag : undefined}
@@ -287,7 +317,7 @@ export function Board({
       {/* Backlog lanes — each is a flex column container holding its cards in flow */}
       {node.lanes.map((lane, laneIdx) => {
         if (lane.type !== 'backlog') return null;
-        const items = getBacklogCards(node, laneIdx);
+        const items = getBacklogCards(node, lane.id);
         return (
           <div
             key={`backlog-body-${lane.id}`}
@@ -296,12 +326,11 @@ export function Board({
               width: LANE_WIDTH,
               left: laneIdx * (LANE_WIDTH + GAP),
               top: HEADER_H,
-              minHeight: bodyH - HEADER_H + HEADER_H, // body fills the lane
+              minHeight: bodyH - HEADER_H + HEADER_H,
               zIndex: 1,
             }}
             onClick={e => {
-              // Only treat clicks on the empty container area as add — card clicks bubble but should be ignored
-              if (e.target === e.currentTarget) handleBacklogAdd(laneIdx);
+              if (e.target === e.currentTarget) handleBacklogAdd(lane.id);
             }}
           >
             {items.map((card, rankIdx) => {
@@ -334,7 +363,8 @@ export function Board({
 
       {/* New card input */}
       {newCard && (() => {
-        const lane = node.lanes[newCard.laneIdx];
+        const lane = node.lanes.find(l => l.id === newCard.laneId);
+        const laneIdx = lane ? node.lanes.indexOf(lane) : 0;
         const isSaga = lane?.type === 'saga';
         const top = isSaga
           ? HEADER_H + newCard.rank * RANK_STEP
@@ -346,7 +376,7 @@ export function Board({
             className="absolute z-[4] bg-surface border-[1.5px] border-accent outline-none font-[inherit] text-text resize-none"
             style={{
               width: LANE_WIDTH,
-              left: newCard.laneIdx * (LANE_WIDTH + GAP),
+              left: laneIdx * (LANE_WIDTH + GAP),
               top,
               height: isSaga ? 80 : 36,
               borderRadius: isSaga ? 10 : 7,

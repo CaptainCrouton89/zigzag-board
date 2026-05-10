@@ -1,20 +1,25 @@
 'use client';
 
 import { useLayoutEffect, useState } from 'react';
-import { Card } from '@/lib/board/types';
+import { Card, Lane } from '@/lib/board/types';
 import { LANE_WIDTH, GAP, HEADER_H, RANK_STEP, CARD_H } from '@/lib/board/layout';
 
 interface Props {
   sagaCards: Card[];
+  lanes: Lane[];
   boardRef: React.RefObject<HTMLDivElement | null>;
 }
 
-function buildPath(sagaCards: Card[]): string {
+function buildPath(sagaCards: Card[], lanes: Lane[]): string {
   if (sagaCards.length < 2) return '';
-  const points = sagaCards.map((card, rankIdx) => ({
-    x: card.lane * (LANE_WIDTH + GAP) + LANE_WIDTH / 2,
-    y: HEADER_H + rankIdx * RANK_STEP + CARD_H / 2,
-  }));
+  // Filter+map: skip cards whose laneId references a concurrently-deleted lane
+  // (findIndex === -1 guard per gotcha 9 in hook sub-plan).
+  const points = sagaCards.flatMap((card, rankIdx) => {
+    const i = lanes.findIndex(l => l.id === card.laneId);
+    if (i < 0) return [];
+    return [{ x: i * (LANE_WIDTH + GAP) + LANE_WIDTH / 2, y: HEADER_H + rankIdx * RANK_STEP + CARD_H / 2 }];
+  });
+  if (points.length < 2) return '';
   let d = `M ${points[0].x} ${points[0].y}`;
   for (let i = 1; i < points.length; i++) {
     const p0 = points[i - 1];
@@ -27,11 +32,11 @@ function buildPath(sagaCards: Card[]): string {
   return d;
 }
 
-export function ZigzagPath({ sagaCards, boardRef }: Props) {
+export function ZigzagPath({ sagaCards, lanes, boardRef }: Props) {
   const [dims, setDims] = useState({ w: 0, h: 0 });
 
   // Pure math — endpoints are where cards SHOULD be (immune to transforms / drag-fixed positioning).
-  const path = buildPath(sagaCards);
+  const path = buildPath(sagaCards, lanes);
 
   useLayoutEffect(() => {
     const update = () => {

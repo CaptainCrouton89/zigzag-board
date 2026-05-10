@@ -36,7 +36,7 @@ export function Lane({
   isLast,
   laneCount,
 }: Props) {
-  const archivedCount = archived.filter(a => a.lane === laneIdx).length;
+  const archivedCount = archived.filter(a => a.laneId === lane.id).length;
   const left = laneIdx * (LANE_WIDTH + GAP);
   const archivePillRef = useRef<HTMLDivElement | null>(null);
 
@@ -141,7 +141,7 @@ export function Lane({
         {isArchiveOpen && archivedCount > 0 && (
           <ArchivePopover
             items={archived}
-            laneIdx={laneIdx}
+            laneId={lane.id}
             anchorRef={archivePillRef}
             onRestore={onRestoreArchived}
           />

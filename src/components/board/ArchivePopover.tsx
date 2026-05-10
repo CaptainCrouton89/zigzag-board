@@ -6,13 +6,13 @@ import { ArchivedItem } from '@/lib/board/types';
 
 interface Props {
   items: ArchivedItem[];
-  laneIdx: number;
+  laneId: string;
   anchorRef: React.RefObject<HTMLElement | null>;
   onRestore: (id: string) => void;
 }
 
-export function ArchivePopover({ items, laneIdx, anchorRef, onRestore }: Props) {
-  const filtered = items.filter(a => a.lane === laneIdx);
+export function ArchivePopover({ items, laneId, anchorRef, onRestore }: Props) {
+  const filtered = items.filter(a => a.laneId === laneId);
   const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
 
   useEffect(() => {
