@@ -1,0 +1,32 @@
+{
+  "name": "@zigzagboard/cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for the Zigzag collaborative board. Designed so an AI agent can read and modify a user's board on their behalf.",
+  "type": "module",
+  "bin": {
+    "zigzag": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "12.1.0",
+    "open": "10.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.2",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}
