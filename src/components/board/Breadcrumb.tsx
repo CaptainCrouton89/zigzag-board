@@ -6,16 +6,17 @@ import { getNodeByPath } from '@/lib/board/state';
 interface Props {
   root: Card;
   path: string[];
+  orgName: string;
   onNavigate: (pathIdx: number) => void;
 }
 
-function nodeTitle(n: Card): string {
-  if (n.id === 'root') return 'Northlight';
+function nodeTitle(n: Card, orgName: string): string {
+  if (n.id === 'root') return orgName;
   if (!n.title) return 'Untitled';
   return n.title;
 }
 
-export function Breadcrumb({ root, path, onNavigate }: Props) {
+export function Breadcrumb({ root, path, orgName, onNavigate }: Props) {
   return (
     <nav className="flex items-center gap-2 flex-wrap text-sm">
       {path.map((id, i) => {
@@ -36,7 +37,7 @@ export function Breadcrumb({ root, path, onNavigate }: Props) {
                   : `cursor-pointer text-text-muted hover:bg-bg-soft hover:text-text ${isDoing ? 'text-accent' : ''}`,
               ].join(' ')}
             >
-              {nodeTitle(n)}
+              {nodeTitle(n, orgName)}
             </span>
           </span>
         );

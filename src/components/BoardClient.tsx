@@ -17,6 +17,8 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
   const router = useRouter()
   const { appState, callbacks } = useBoard(orgId)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const { data: activeOrg } = authClient.useActiveOrganization()
+  const orgName = activeOrg ? activeOrg.name : 'Board'
 
   // Zoom animation: scale + crossfade. cardEl != null = zooming IN to that card.
   const animateZoom = useCallback((cardEl: HTMLElement | null) => {
@@ -89,7 +91,7 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <header className="px-9 py-3 border-b border-border flex items-center justify-between gap-8 bg-bg">
-        <Breadcrumb root={appState.root} path={appState.path} onNavigate={handleNavigate} />
+        <Breadcrumb root={appState.root} path={appState.path} orgName={orgName} onNavigate={handleNavigate} />
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-4 text-[11px] text-text-muted">
             <span className="inline-flex items-center gap-[6px]">
@@ -127,6 +129,7 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
         <Sidebar
           root={appState.root}
           path={appState.path}
+          orgName={orgName}
           onAddPrinciple={callbacks.onAddPrinciple}
           onSetPrinciple={callbacks.onSetPrinciple}
           onRemovePrinciple={callbacks.onRemovePrinciple}

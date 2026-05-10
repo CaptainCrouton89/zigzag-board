@@ -7,18 +7,19 @@ import { getNodeByPath } from '@/lib/board/state';
 interface Props {
   root: Card;
   path: string[];
+  orgName: string;
   onAddPrinciple: (text: string) => void;
   onSetPrinciple: (idx: number, value: string) => void;
   onRemovePrinciple: (idx: number) => void;
 }
 
-function nodeTitle(n: Card): string {
-  if (n.id === 'root') return 'Northlight';
+function nodeTitle(n: Card, orgName: string): string {
+  if (n.id === 'root') return orgName;
   if (!n.title) return 'Untitled';
   return n.title;
 }
 
-export function Sidebar({ root, path, onAddPrinciple, onSetPrinciple, onRemovePrinciple }: Props) {
+export function Sidebar({ root, path, orgName, onAddPrinciple, onSetPrinciple, onRemovePrinciple }: Props) {
   const addRef = useRef<HTMLDivElement>(null);
 
   const cur = getNodeByPath(root, path);
@@ -27,7 +28,7 @@ export function Sidebar({ root, path, onAddPrinciple, onSetPrinciple, onRemovePr
   const inherited: { text: string; source: string }[] = [];
   for (let i = 0; i < path.length - 1; i++) {
     const ancestor = getNodeByPath(root, path.slice(0, i + 1));
-    const title = nodeTitle(ancestor);
+    const title = nodeTitle(ancestor, orgName);
     ancestor.principles.forEach(p => {
       inherited.push({ text: p, source: title });
     });
