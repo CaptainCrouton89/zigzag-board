@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/board/Sidebar'
 import { Breadcrumb } from '@/components/board/Breadcrumb'
 import { Board } from '@/components/board/Board'
+import { OrgSwitcher } from '@/components/board/OrgSwitcher'
 import { useBoard } from '@/lib/board/useBoard'
 import { authClient } from '@/lib/auth-client'
 
@@ -173,6 +174,7 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
             </span>
             <span>click card → zoom in</span>
           </div>
+          <OrgSwitcher activeOrgId={orgId} activeOrgName={orgName} />
           {/* M-1: min-w-0 lets the truncating <span> shrink below content width
               on narrow viewports; without it, `truncate max-w-[160px]` is
               ineffective inside a flex parent and the email pushes Sign-out
