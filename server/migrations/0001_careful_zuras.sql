@@ -1,0 +1,1 @@
+ALTER TABLE "organization" DROP CONSTRAINT "organization_slug_unique";
