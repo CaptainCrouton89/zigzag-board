@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zigzag Board — lane types</title>
+  <style>
+    :root {
+      --bg: #faf7f2;
+      --bg-soft: #f3eee4;
+      --surface: #ffffff;
+      --border: #e8e3d8;
+      --border-strong: #d4cdbe;
+      --text: #1f1d1a;
+      --text-muted: #7d7669;
+      --text-dim: #b8b1a4;
+      --accent: #b45309;
+      --accent-2: #d97706;
+      --accent-soft: #fde7c5;
+      --accent-glow: rgba(180, 83, 9, 0.18);
+      --done: #b8b1a4;
+      --shadow-1: 0 1px 2px rgba(31, 29, 26, 0.04), 0 2px 6px rgba(31, 29, 26, 0.05);
+      --shadow-2: 0 4px 12px rgba(31, 29, 26, 0.08), 0 16px 36px rgba(31, 29, 26, 0.10);
+
+      --lane-width: 256px;
+      --gap: 18px;
+      --card-h: 80px;
+      --rank-step: 98px;
+      --compact-h: 36px;
+      --compact-step: 42px;
+      --header-h: 76px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font-feature-settings: "ss01", "cv11";
+      -webkit-font-smoothing: antialiased;
+      overflow-x: auto;
+    }
+
+    /* ============== HEADER ============== */
+    header {
+      padding: 18px 36px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 32px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 200;
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      flex-wrap: wrap;
+    }
+    .crumb {
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 5px;
+      transition: background 120ms, color 120ms;
+      font-weight: 500;
+    }
+    .crumb:hover { background: var(--bg-soft); color: var(--text); }
+    .crumb.current {
+      color: var(--text);
+      cursor: default;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .crumb.doing { color: var(--accent); }
+    .crumb.current.doing { background: var(--accent-soft); }
+    .sep { color: var(--text-dim); font-size: 12px; user-select: none; }
+
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+    .legend .item { display: inline-flex; align-items: center; gap: 6px; }
+    .legend .line {
+      display: inline-block;
+      width: 22px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--accent);
+    }
+    .legend kbd {
+      font-family: inherit;
+      font-size: 10.5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--bg-soft);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    /* ============== PRINCIPLES BAR ============== */
+    .principles {
+      margin: 18px 36px 0;
+      padding: 10px 16px 10px 18px;
+      background: linear-gradient(90deg, var(--accent-soft) 0%, rgba(253, 231, 197, 0.25) 100%);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .principle-item {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--text);
+      font-style: italic;
+      outline: none;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    .principle-item:focus { background: rgba(255,255,255,0.5); font-style: normal; }
+    .principle-item::before {
+      content: '◆';
+      color: var(--accent);
+      margin-right: 8px;
+      font-size: 9px;
+      vertical-align: middle;
+      font-style: normal;
+    }
+    .principle-item.inherited {
+      opacity: 0.55;
+      font-size: 12px;
+    }
+    .principle-item.inherited::before {
+      content: '◇';
+    }
+    .principle-add {
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 1px 4px 1px 0;
+      align-self: flex-start;
+      letter-spacing: 0.04em;
+    }
+    .principle-add:hover { color: var(--accent); }
+
+    /* ============== BOARD ============== */
+    main {
+      padding: 22px 36px 80px;
+      position: relative;
+    }
+
+    .board-wrap {
+      position: relative;
+      width: max-content;
+      margin: 0 auto;
+      transform-origin: 50% 50%;
+    }
+
+    .board {
+      position: relative;
+      width: calc(var(--lane-width) * var(--lane-count) + var(--gap) * (var(--lane-count) - 1));
+    }
+
+    /* Lane background */
+    .lane-bg {
+      position: absolute;
+      top: 0;
+      width: var(--lane-width);
+      left: calc(var(--lane-i) * (var(--lane-width) + var(--gap)));
+      height: 100%;
+      transition: background 160ms;
+      border-radius: 8px;
+    }
+    .lane-bg.saga { background: rgba(180, 83, 9, 0.025); }
+    .lane-bg.backlog { background: rgba(31, 29, 26, 0.02); }
+    .lane-bg.drop-target { background: var(--accent-glow) !important; }
+
+    /* Lane header */
+    .lane-head {
+      position: absolute;
+      top: 0;
+      width: var(--lane-width);
+      left: calc(var(--lane-i) * (var(--lane-width) + var(--gap)));
+      height: var(--header-h);
+      padding: 6px 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      border-bottom: 1px dashed var(--border-strong);
+    }
+    .lane-titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .lane-titlerow {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+      min-width: 0;
+    }
+    .lane-title {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text);
+      cursor: text;
+      outline: none;
+      padding: 1px 4px;
+      border-radius: 4px;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .lane-title:hover, .lane-title:focus { background: var(--bg-soft); }
+    .lane-type {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      padding: 2px 5px 1px;
+      border-radius: 3px;
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+      transition: all 120ms;
+    }
+    .lane-type.saga {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .lane-type.backlog {
+      color: var(--text-muted);
+      background: var(--bg-soft);
+      border: 1px solid var(--border);
+    }
+    .lane-type:hover { filter: brightness(0.96); }
+
+    .lane-stance {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 0 4px;
+      cursor: text;
+      outline: none;
+      border-radius: 3px;
+      line-height: 1.35;
+    }
+    .lane-stance:hover, .lane-stance:focus { background: var(--bg-soft); color: var(--text); }
+    .lane-stance.empty { color: var(--text-dim); opacity: 0.6; }
+    .lane-stance.empty::before { content: '+ stance'; }
+
+    .lane-archive {
+      align-self: flex-start;
+      font-size: 10.5px;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      padding: 1px 7px 1px 5px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      transition: color 120ms, border-color 120ms;
+    }
+    .lane-archive:hover { color: var(--text); border-color: var(--border-strong); }
+    .lane-archive .chev { display: inline-block; transition: transform 160ms; font-size: 8px; }
+    .lane-archive.open .chev { transform: rotate(90deg); }
+    .lane-archive.empty { opacity: 0.4; cursor: default; }
+
+    .add-lane {
+      position: absolute;
+      top: 6px;
+      left: calc(var(--lane-count) * (var(--lane-width) + var(--gap)) - var(--gap) + 14px);
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      border: 1px dashed var(--border-strong);
+      color: var(--text-dim);
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 120ms;
+      background: transparent;
+    }
+    .add-lane:hover { color: var(--accent); border-color: var(--accent); background: var(--surface); }
+
+    /* Empty-lane click target */
+    .lane-clickzone {
+      position: absolute;
+      width: var(--lane-width);
+      left: calc(var(--lane-i) * (var(--lane-width) + var(--gap)));
+      top: var(--header-h);
+      height: calc(100% - var(--header-h));
+      cursor: text;
+      z-index: 0;
+    }
+
+    /* ============== CARDS ============== */
+    .card {
+      position: absolute;
+      width: var(--lane-width);
+      height: var(--card-h);
+      top: calc(var(--header-h) + var(--rank-i) * var(--rank-step));
+      left: calc(var(--lane-i) * (var(--lane-width) + var(--gap)));
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: var(--shadow-1);
+      display: flex;
+      align-items: stretch;
+      transition: top 240ms cubic-bezier(0.2, 0.7, 0.2, 1),
+                  left 240ms cubic-bezier(0.2, 0.7, 0.2, 1),
+                  box-shadow 140ms,
+                  transform 140ms,
+                  border-color 140ms;
+      user-select: none;
+      z-index: 3;
+      overflow: hidden;
+      cursor: zoom-in;
+    }
+    .card:hover { box-shadow: var(--shadow-2); }
+    .card.dragging {
+      transition: none;
+      box-shadow: var(--shadow-2);
+      transform: scale(1.025) rotate(0.4deg);
+      cursor: grabbing;
+      z-index: 100;
+    }
+
+    /* Compact (backlog) */
+    .card.compact {
+      height: var(--compact-h);
+      top: calc(var(--header-h) + var(--rank-i) * var(--compact-step));
+      border-radius: 7px;
+    }
+    .card.compact .card-body {
+      padding: 6px 4px 6px 6px;
+      flex-direction: row;
+      align-items: center;
+      gap: 6px;
+      justify-content: flex-start;
+    }
+    .card.compact .card-title {
+      font-size: 12.5px;
+      font-weight: 400;
+      -webkit-line-clamp: 1;
+      line-clamp: 1;
+      flex: 1;
+      line-height: 1.2;
+    }
+    .card.compact .card-meta { display: none; }
+    .card.compact .card-handle { flex-basis: 14px; }
+    .card.compact .card-handle svg { transform: scale(0.78); }
+    .card.compact .card-status { flex-basis: 28px; }
+    .card.compact .status-btn { width: 16px; height: 16px; font-size: 8px; }
+    .card.compact.doing::before { width: 3px; }
+    .card.compact .status-revert {
+      width: 11px; height: 11px; font-size: 7px;
+      bottom: 3px; right: 2px;
+    }
+
+    /* DOING state */
+    .card.doing {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow), var(--shadow-1);
+    }
+    .card.doing::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 4px;
+      background: linear-gradient(180deg, var(--accent), var(--accent-2));
+      animation: pulse 2.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.85; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Drag handle */
+    .card-handle {
+      flex: 0 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      color: var(--text-dim);
+      transition: color 120ms, background 120ms;
+      background: transparent;
+    }
+    .card-handle:hover { color: var(--text-muted); background: var(--bg-soft); }
+    .card-handle:active { cursor: grabbing; }
+    .card-handle svg { display: block; }
+
+    /* Card body */
+    .card-body {
+      flex: 1;
+      padding: 10px 4px 10px 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-width: 0;
+    }
+    .card-title {
+      font-size: 13.5px;
+      font-weight: 500;
+      line-height: 1.32;
+      color: var(--text);
+      flex: 1;
+      outline: none;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      cursor: text;
+      word-break: break-word;
+    }
+    .card.done .card-title { text-decoration: line-through; color: var(--done); }
+
+    .card-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+      font-size: 10px;
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .card-meta .child-count { display: inline-flex; align-items: center; gap: 3px; }
+    .card-meta .doing-tag { color: var(--accent); font-weight: 600; }
+
+    /* Status button */
+    .card-status {
+      flex: 0 0 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: transparent;
+      transition: background 120ms;
+      position: relative;
+    }
+    .card-status:hover { background: var(--bg-soft); }
+    .status-btn {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border-strong);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 10px;
+      transition: all 120ms;
+      background: var(--surface);
+    }
+    .card-status:hover .status-btn {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .card.doing .status-btn {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .status-revert {
+      position: absolute;
+      bottom: 6px;
+      right: 4px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      color: var(--text-muted);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      cursor: pointer;
+    }
+    .card.doing:hover .status-revert { display: flex; }
+    .status-revert:hover { color: var(--text); border-color: var(--text-muted); }
+
+    /* Drop placeholder */
+    .placeholder {
+      position: absolute;
+      width: var(--lane-width);
+      left: calc(var(--lane-i) * (var(--lane-width) + var(--gap)));
+      border: 1.5px dashed var(--accent);
+      border-radius: 10px;
+      background: rgba(180, 83, 9, 0.06);
+      pointer-events: none;
+      z-index: 1;
+      transition: top 200ms cubic-bezier(0.2, 0.7, 0.2, 1),
+                  left 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+    .placeholder.saga {
+      height: var(--card-h);
+      top: calc(var(--header-h) + var(--rank-i) * var(--rank-step));
+    }
+    .placeholder.backlog {
+      height: var(--compact-h);
+      top: calc(var(--header-h) + var(--rank-i) * var(--compact-step));
+      border-radius: 7px;
+    }
+
+    /* New-card input */
+    .new-input {
+      position: absolute;
+      width: var(--lane-width);
+      left: calc(var(--lane-i) * (var(--lane-width) + var(--gap)));
+      background: var(--surface);
+      border: 1.5px solid var(--accent);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 500;
+      line-height: 1.32;
+      color: var(--text);
+      outline: none;
+      box-shadow: var(--shadow-2);
+      resize: none;
+      z-index: 4;
+    }
+    .new-input.saga {
+      height: var(--card-h);
+      top: calc(var(--header-h) + var(--rank-i) * var(--rank-step));
+    }
+    .new-input.backlog {
+      height: var(--compact-h);
+      top: calc(var(--header-h) + var(--rank-i) * var(--compact-step));
+      padding: 8px 12px;
+      border-radius: 7px;
+      font-size: 12.5px;
+      font-weight: 400;
+    }
+
+    /* Archive popover */
+    .archive-pop {
+      position: absolute;
+      width: var(--lane-width);
+      left: calc(var(--lane-i) * (var(--lane-width) + var(--gap)));
+      top: calc(var(--header-h) + 4px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 50;
+      box-shadow: var(--shadow-2);
+    }
+    .archive-pop .item {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      padding: 6px 8px;
+      cursor: pointer;
+      border-radius: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .archive-pop .item:hover { background: var(--bg-soft); color: var(--text); }
+    .archive-pop .item .ttl { text-decoration: line-through; }
+    .archive-pop .item .undo {
+      font-size: 10px;
+      color: var(--accent);
+      opacity: 0;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .archive-pop .item:hover .undo { opacity: 1; }
+
+    /* SVG polyline */
+    #zigzag {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 2;
+      overflow: visible;
+    }
+    #zigzag path {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 2.25;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.85;
+    }
+    #zigzag path.shadow {
+      stroke: var(--accent);
+      stroke-width: 8;
+      opacity: 0.10;
+      filter: blur(2px);
+    }
+
+    /* Empty state */
+    .empty-state {
+      position: absolute;
+      top: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      pointer-events: none;
+    }
+    .empty-state .big {
+      font-size: 16px;
+      color: var(--text);
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+
+    .note {
+      max-width: 800px;
+      margin: 64px auto 0;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .note strong { color: var(--text); font-weight: 600; }
+    .note kbd {
+      font-family: inherit;
+      font-size: 10.5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--bg-soft);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="breadcrumb" id="breadcrumb"></div>
+    <div class="legend">
+      <span class="item"><span class="line"></span>priority weave (sagas only)</span>
+      <span class="item"><kbd>esc</kbd> zoom out</span>
+      <span class="item">click lane type to toggle</span>
+    </div>
+  </header>
+
+  <div class="principles" id="principles"></div>
+
+  <main>
+    <div class="board-wrap" id="wrap">
+      <div class="board" id="board"></div>
+      <svg id="zigzag" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <div class="note">
+      <strong>Lane types.</strong> <span style="color:var(--accent);font-weight:600">SAGA</span> lanes get full cards, vertical = priority rank, woven by the polyline.
+      <span style="color:var(--text-muted);font-weight:600">BACKLOG</span> lanes are unranked compact rows for capture &amp; triage — no zigzag.
+      Each lane carries a one-line <em>stance</em> (how to weight it). Strategic <strong>principles</strong> live in the bar above and inherit when you zoom in.
+      Click a lane's type pill to toggle. Drag a backlog item into a saga lane to promote it.
+    </div>
+  </main>
+
+  <script>
+    // ====================== DATA ======================
+    let nextId = 1000;
+    const newId = (prefix = 'n') => `${prefix}${nextId++}`;
+
+    function node({ title, status = 'todo', lanes = [], cards = [], principles = [] } = {}) {
+      return {
+        id: newId('c'),
+        title,
+        status,
+        lane: 0,
+        lanes,
+        cards,
+        principles,
+        archived: [],
+      };
+    }
+
+    function makeChild(title, lane, status = 'todo', extras = {}) {
+      const c = node({ title, status, ...extras });
+      c.lane = lane;
+      return c;
+    }
+
+    // ===== Top-level: Northlight priority board =====
+    const root = {
+      id: 'root',
+      title: 'Northlight',
+      status: null,
+      lane: 0,
+      principles: [
+        'Hypergrowth gets max time, attention, and resources. Standard growth gets minimal.',
+        'Make the product really good',
+      ],
+      lanes: [
+        { id: 'l0', title: 'Sales octopus saga', type: 'saga', stance: 'Hypergrowth — max focus' },
+        { id: 'l1', title: 'Backlog', type: 'backlog', stance: 'Capture, triage later' },
+        { id: 'l2', title: 'Chaz personal', type: 'saga', stance: 'Marathon-level discipline' },
+      ],
+      cards: [
+        // ----- Sales octopus saga -----
+        makeChild('Inbox bugs / issues', 0, 'doing'),
+        makeChild('Onboarding is too slow', 0),
+        makeChild('CRM ZIG: cross-workspace contact store', 0, 'doing', {
+          principles: ['Don\'t overfit previous CRM spec — store unique IDs across LinkedIn/Twitter/GitHub/Insta to prevent double-hits'],
+        }),
+        makeChild('Seeded workers spoon-feed enough value to buy', 0),
+        makeChild('Workers not working properly', 0),
+        makeChild('Onboarding straight-line to sales octopus', 0),
+        makeChild('Risk mitigation & failure modes', 0),
+        makeChild('Trial credits enough to become sales octopus', 0),
+        makeChild('Inbox: boundless skill ceiling', 0),
+        makeChild('Agent steers user toward sales octopus', 0),
+
+        // ----- Backlog -----
+        makeChild("Agent doesn't gather context properly when creating tickets", 1),
+        makeChild('Stop the python install popup', 1),
+        makeChild("Cmd+shift+space can't approve things", 1),
+        makeChild('Why do non-call onboarders drop off?', 1),
+        makeChild('Permissions popup is just `ls ~`', 1),
+        makeChild('Multi-chat switching regressed in UI refactor', 1),
+        makeChild('Reminder-with-draft for kicked-off chats', 1),
+        makeChild('Manhattan project', 1),
+        makeChild('One ticket can spawn many tickets', 1),
+        makeChild('LinkedIn account bans (Vamo, Collin, Brad)', 1),
+        makeChild('Lost-in-conversation context never resurfaces', 1),
+        makeChild('Inbox 0: view-workers button broken', 1),
+        makeChild('Team features / shared workspaces', 1),
+        makeChild('Skip-but-return onboarding steps', 1),
+        makeChild('Hivemind admin-only (Austin → super admin next chart)', 1),
+        makeChild('Windows build', 1),
+        makeChild('Hiring page with culture blurb', 1),
+        makeChild('Worker behavior diagram (baseline)', 1),
+        makeChild('Cmd+shift+space on Slack', 1),
+        makeChild('What worked with Ben Thompson?', 1),
+        makeChild('Credit visibility', 1),
+        makeChild('DO R: Luke on more users', 1),
+        makeChild('Desktop app bugs', 1),
+        makeChild('Cmd+shift+space showing HITL', 1),
+        makeChild('"Your ROI" features', 1),
+        makeChild('End-to-end LinkedIn meeting workers (toggle on)', 1),
+
+        // ----- Chaz personal -----
+        makeChild('Get sleep', 2),
+        makeChild('Run in mornings', 2),
+        makeChild('Meditate', 2),
+      ],
+      archived: [],
+    };
+
+    // ----- Seed children for richer zoom demo -----
+    function seedChildren(parent, lanes, items) {
+      parent.lanes = lanes;
+      items.forEach(([title, lane, status]) => {
+        parent.cards.push(makeChild(title, lane, status || 'todo'));
+      });
+    }
+
+    // CRM ZIG (the doing one)
+    seedChildren(root.cards[2], [
+      { id: 'crm-data', title: 'Data model', type: 'saga', stance: 'Cross-workspace primitive' },
+      { id: 'crm-ui', title: 'Surfaces', type: 'saga' },
+      { id: 'crm-bk', title: 'Open questions', type: 'backlog', stance: 'Resolve before shipping' },
+    ], [
+      ['Schema: contact + cross-platform IDs', 0, 'doing'],
+      ['Workspace-shared store, per-org access', 0],
+      ['Sync from existing inbox/tickets', 0],
+      ['Contact panel in inbox view', 1],
+      ['Conflict UI when 2 workers target same person', 1],
+      ['How do we de-dupe contacts across spellings?', 2],
+      ['Do non-admins see all contacts?', 2],
+    ]);
+
+    // Workers not working properly
+    seedChildren(root.cards[4], [
+      { id: 'wnw-now', title: 'Active fires', type: 'saga', stance: 'Currently broken' },
+      { id: 'wnw-arch', title: 'Architecture issues', type: 'saga' },
+      { id: 'wnw-bk', title: 'Reports', type: 'backlog' },
+    ], [
+      ['Chaz: Kaitlyn worker — claims no Gmail alias when one exists', 0, 'doing'],
+      ['Failed to start sending due to timing (silas)', 0],
+      ['Failed to detect Stanford Gmail alias (silas)', 0],
+      ['Worker / cron-job context placement is awkward (matt)', 1],
+      ['Workers should learn from human edits', 1],
+    ]);
+
+    // Risk mitigation
+    seedChildren(root.cards[6], [
+      { id: 'rm-active', title: 'Active mitigations', type: 'saga' },
+      { id: 'rm-edge', title: 'Failure modes', type: 'backlog' },
+    ], [
+      ['Prevent account bans', 0],
+      ['Surface auth issues as tickets', 0],
+      ['Bulk-edit 20+ wrongly-done tickets at scale', 1],
+      ['Update worker but old tickets stay (regenerate?)', 1],
+      ['One approved ticket spawns many follow-ups', 1],
+    ]);
+
+    // LinkedIn bans (in backlog)
+    seedChildren(root.cards[19], [
+      { id: 'lb-cases', title: 'Cases', type: 'saga' },
+    ], [
+      ['Vamo — limited on LinkedIn Recruiter (not understood)', 0],
+      ['Collin Stockton — seems diagnosed', 0, 'doing'],
+      ['Brad — pretty confusing', 0],
+    ]);
+
+    // Worker behavior diagram (in backlog)
+    seedChildren(root.cards[27], [
+      { id: 'wb-q', title: 'Questions to answer', type: 'saga', stance: 'Should answer all "Chaz questions"' },
+    ], [
+      ['Worker behavior', 0],
+      ['Worker context', 0],
+      ['What happens when works fail', 0],
+      ['Tools available to workers', 0],
+      ['Prompting on workers', 0],
+    ]);
+
+    const state = {
+      root,
+      path: ['root'],
+      openArchive: null,
+    };
+
+    // ====================== NAV ======================
+    function getNodeByPath(pathArr) {
+      let n = state.root;
+      for (let i = 1; i < pathArr.length; i++) {
+        n = n.cards.find(c => c.id === pathArr[i]);
+        if (!n) return state.root;
+      }
+      return n;
+    }
+    function currentNode() { return getNodeByPath(state.path); }
+    function ensureLanes(n) {
+      if (!n.lanes || n.lanes.length === 0) {
+        n.lanes = [{ id: newId('l'), title: 'Next steps', type: 'saga' }];
+      }
+      n.cards.forEach(c => { if (c.lane >= n.lanes.length) c.lane = 0; });
+    }
+    function nodeTitle(n) {
+      if (n.id === 'root') return 'Northlight';
+      return n.title || 'Untitled';
+    }
+
+    // ====================== ELEMENTS ======================
+    const board = document.getElementById('board');
+    const wrap = document.getElementById('wrap');
+    const svg = document.getElementById('zigzag');
+    const breadcrumbEl = document.getElementById('breadcrumb');
+    const principlesEl = document.getElementById('principles');
+
+    // ====================== RENDER ======================
+    function renderBreadcrumb() {
+      breadcrumbEl.innerHTML = '';
+      state.path.forEach((id, i) => {
+        const n = getNodeByPath(state.path.slice(0, i + 1));
+        if (i > 0) {
+          const sep = document.createElement('span');
+          sep.className = 'sep';
+          sep.textContent = '/';
+          breadcrumbEl.appendChild(sep);
+        }
+        const c = document.createElement('span');
+        const isCurrent = i === state.path.length - 1;
+        c.className = 'crumb' + (isCurrent ? ' current' : '') + (n.status === 'doing' ? ' doing' : '');
+        c.textContent = nodeTitle(n);
+        if (!isCurrent) c.addEventListener('click', () => zoomTo(i));
+        breadcrumbEl.appendChild(c);
+      });
+    }
+
+    function renderPrinciples() {
+      principlesEl.innerHTML = '';
+
+      // Inherited (ancestor) principles, dimmed
+      for (let i = 0; i < state.path.length - 1; i++) {
+        const ancestor = getNodeByPath(state.path.slice(0, i + 1));
+        (ancestor.principles || []).forEach(p => {
+          const item = document.createElement('div');
+          item.className = 'principle-item inherited';
+          item.title = `inherited from ${nodeTitle(ancestor)}`;
+          item.textContent = p;
+          principlesEl.appendChild(item);
+        });
+      }
+
+      // Current node's principles
+      const cur = currentNode();
+      cur.principles = cur.principles || [];
+      cur.principles.forEach((p, idx) => {
+        const item = document.createElement('div');
+        item.className = 'principle-item';
+        item.contentEditable = 'true';
+        item.spellcheck = false;
+        item.textContent = p;
+        item.addEventListener('blur', () => {
+          const v = item.textContent.trim();
+          if (!v) { cur.principles.splice(idx, 1); renderPrinciples(); }
+          else cur.principles[idx] = v;
+        });
+        item.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); item.blur(); }
+        });
+        principlesEl.appendChild(item);
+      });
+
+      const add = document.createElement('div');
+      add.className = 'principle-add';
+      add.textContent = '+ add principle';
+      add.addEventListener('click', () => {
+        cur.principles.push('New principle');
+        renderPrinciples();
+        // focus the newly added
+        requestAnimationFrame(() => {
+          const els = principlesEl.querySelectorAll('.principle-item:not(.inherited)');
+          const last = els[els.length - 1];
+          if (last) {
+            last.focus();
+            const range = document.createRange();
+            range.selectNodeContents(last);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        });
+      });
+      principlesEl.appendChild(add);
+    }
+
+    function render() {
+      const cur = currentNode();
+      ensureLanes(cur);
+
+      renderBreadcrumb();
+      renderPrinciples();
+
+      const lanes = cur.lanes;
+      const cards = cur.cards;
+      const archived = cur.archived || (cur.archived = []);
+
+      // Compute per-lane positions
+      const sagaCards = cards.filter(c => lanes[c.lane].type === 'saga');
+      const sagaRankOf = (card) => sagaCards.indexOf(card);
+
+      const backlogPos = {}; // laneIdx -> [card, card, ...]
+      lanes.forEach((lane, i) => {
+        if (lane.type === 'backlog') {
+          backlogPos[i] = cards.filter(c => c.lane === i);
+        }
+      });
+
+      // Compute board height
+      const sagaRows = sagaCards.length;
+      let backlogRowsMax = 0;
+      Object.values(backlogPos).forEach(arr => { if (arr.length > backlogRowsMax) backlogRowsMax = arr.length; });
+      const sagaH = Math.max(sagaRows, 6) * 98; // rank-step
+      const backlogH = backlogRowsMax * 42; // compact-step
+      const bodyH = Math.max(sagaH, backlogH, 6 * 98);
+
+      board.style.setProperty('--lane-count', lanes.length);
+      board.style.height = `calc(var(--header-h) + ${bodyH}px + 24px)`;
+
+      board.innerHTML = '';
+
+      // Lane backgrounds
+      lanes.forEach((lane, i) => {
+        const bg = document.createElement('div');
+        bg.className = 'lane-bg ' + lane.type;
+        bg.style.setProperty('--lane-i', i);
+        bg.dataset.laneIdx = i;
+        board.appendChild(bg);
+      });
+
+      // Click zones
+      lanes.forEach((lane, i) => {
+        const zone = document.createElement('div');
+        zone.className = 'lane-clickzone';
+        zone.style.setProperty('--lane-i', i);
+        zone.addEventListener('click', (e) => onClickToAdd(e, i));
+        board.appendChild(zone);
+      });
+
+      // Lane headers
+      lanes.forEach((lane, i) => {
+        const head = document.createElement('div');
+        head.className = 'lane-head';
+        head.style.setProperty('--lane-i', i);
+
+        const titlebar = document.createElement('div');
+        titlebar.className = 'lane-titlebar';
+        const titleRow = document.createElement('div');
+        titleRow.className = 'lane-titlerow';
+
+        const title = document.createElement('div');
+        title.className = 'lane-title';
+        title.contentEditable = 'true';
+        title.spellcheck = false;
+        title.textContent = lane.title;
+        title.addEventListener('blur', () => { lane.title = title.textContent.trim() || 'Untitled'; renderBreadcrumb(); });
+        title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); } });
+
+        const typePill = document.createElement('div');
+        typePill.className = 'lane-type ' + lane.type;
+        typePill.textContent = lane.type;
+        typePill.title = 'Click to toggle saga ↔ backlog';
+        typePill.addEventListener('click', (e) => { e.stopPropagation(); toggleLaneType(i); });
+
+        titleRow.appendChild(title);
+        titlebar.appendChild(titleRow);
+        titlebar.appendChild(typePill);
+
+        const stance = document.createElement('div');
+        stance.className = 'lane-stance' + (lane.stance ? '' : ' empty');
+        stance.contentEditable = 'true';
+        stance.spellcheck = false;
+        stance.textContent = lane.stance || '';
+        stance.addEventListener('focus', () => { stance.classList.remove('empty'); });
+        stance.addEventListener('blur', () => {
+          lane.stance = stance.textContent.trim();
+          if (!lane.stance) stance.classList.add('empty');
+        });
+        stance.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); stance.blur(); } });
+
+        const ac = archived.filter(a => a.lane === i).length;
+        const archive = document.createElement('div');
+        archive.className = 'lane-archive' + (ac === 0 ? ' empty' : '') + (state.openArchive === i ? ' open' : '');
+        archive.innerHTML = `<span class="chev">▶</span> ${ac} done`;
+        if (ac > 0) {
+          archive.addEventListener('click', (e) => {
+            e.stopPropagation();
+            state.openArchive = state.openArchive === i ? null : i;
+            render();
+          });
+        }
+
+        head.appendChild(titlebar);
+        head.appendChild(stance);
+        head.appendChild(archive);
+        board.appendChild(head);
+
+        if (state.openArchive === i && ac > 0) {
+          const pop = document.createElement('div');
+          pop.className = 'archive-pop';
+          pop.style.setProperty('--lane-i', i);
+          archived.filter(a => a.lane === i).forEach(a => {
+            const item = document.createElement('div');
+            item.className = 'item';
+            item.innerHTML = `<span class="ttl">${escapeHtml(a.title)}</span><span class="undo">restore</span>`;
+            item.addEventListener('click', () => unarchive(cur, a.id));
+            pop.appendChild(item);
+          });
+          board.appendChild(pop);
+        }
+      });
+
+      // Add-lane button
+      const addLaneBtn = document.createElement('div');
+      addLaneBtn.className = 'add-lane';
+      addLaneBtn.textContent = '+';
+      addLaneBtn.title = 'Add lane';
+      addLaneBtn.addEventListener('click', () => addLane(cur));
+      board.appendChild(addLaneBtn);
+
+      // Cards
+      cards.forEach((card, idx) => {
+        const lane = lanes[card.lane];
+        const isSaga = lane.type === 'saga';
+        const rankIdx = isSaga ? sagaRankOf(card) : backlogPos[card.lane].indexOf(card);
+
+        const el = document.createElement('div');
+        el.className = 'card' + (card.status === 'doing' ? ' doing' : '') + (isSaga ? '' : ' compact');
+        el.style.setProperty('--lane-i', card.lane);
+        el.style.setProperty('--rank-i', rankIdx);
+        el.dataset.id = card.id;
+
+        // Drag handle
+        const handle = document.createElement('div');
+        handle.className = 'card-handle';
+        handle.innerHTML = `
+          <svg width="6" height="14" viewBox="0 0 6 14" fill="currentColor">
+            <circle cx="1.5" cy="2"  r="1.1"/>
+            <circle cx="4.5" cy="2"  r="1.1"/>
+            <circle cx="1.5" cy="7"  r="1.1"/>
+            <circle cx="4.5" cy="7"  r="1.1"/>
+            <circle cx="1.5" cy="12" r="1.1"/>
+            <circle cx="4.5" cy="12" r="1.1"/>
+          </svg>`;
+        handle.title = 'Drag to reorder';
+        attachDrag(handle, el, card);
+
+        // Body
+        const body = document.createElement('div');
+        body.className = 'card-body';
+        body.addEventListener('click', (e) => {
+          if (e.target.closest('.card-title')) return;
+          zoomInto(card.id);
+        });
+
+        const title = document.createElement('div');
+        title.className = 'card-title';
+        title.contentEditable = 'true';
+        title.spellcheck = false;
+        title.textContent = card.title;
+        title.addEventListener('mousedown', (e) => e.stopPropagation());
+        title.addEventListener('pointerdown', (e) => e.stopPropagation());
+        title.addEventListener('click', (e) => e.stopPropagation());
+        title.addEventListener('blur', () => { card.title = title.textContent.trim() || 'Untitled'; });
+        title.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); title.blur(); }
+          if (e.key === 'Escape') { e.preventDefault(); title.blur(); }
+        });
+
+        body.appendChild(title);
+
+        if (isSaga) {
+          const meta = document.createElement('div');
+          meta.className = 'card-meta';
+          const childCount = (card.cards || []).length;
+          const doingChildren = (card.cards || []).filter(c => c.status === 'doing').length;
+          if (card.status === 'doing') {
+            const tag = document.createElement('span');
+            tag.className = 'doing-tag';
+            tag.textContent = '● in flight';
+            meta.appendChild(tag);
+          }
+          if (childCount > 0) {
+            const cc = document.createElement('span');
+            cc.className = 'child-count';
+            cc.innerHTML = `<svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg> ${childCount}${doingChildren ? ` · ${doingChildren} live` : ''}`;
+            meta.appendChild(cc);
+          }
+          if (meta.children.length > 0) body.appendChild(meta);
+        }
+
+        // Status button
+        const status = document.createElement('div');
+        status.className = 'card-status';
+        const btn = document.createElement('div');
+        btn.className = 'status-btn';
+        btn.innerHTML = card.status === 'doing'
+          ? '<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2.5,6.5 5,9 9.5,3.5"/></svg>'
+          : '<svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor"><polygon points="3,1.5 3,10.5 10.5,6"/></svg>';
+        btn.title = card.status === 'doing' ? 'Mark done' : 'Start working';
+        status.appendChild(btn);
+
+        if (card.status === 'doing') {
+          const revert = document.createElement('div');
+          revert.className = 'status-revert';
+          revert.innerHTML = '<svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5 Q 5 1, 8 5"/><polyline points="2,3 2,5 4,5"/></svg>';
+          revert.title = 'Back to todo';
+          revert.addEventListener('click', (e) => { e.stopPropagation(); revertStatus(card.id); });
+          status.appendChild(revert);
+        }
+
+        status.addEventListener('pointerdown', (e) => e.stopPropagation());
+        status.addEventListener('click', (e) => { e.stopPropagation(); cycleStatus(card.id); });
+
+        el.appendChild(handle);
+        el.appendChild(body);
+        el.appendChild(status);
+        board.appendChild(el);
+      });
+
+      // Empty
+      if (cards.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.innerHTML = `<div class="big">Empty board</div>Click any lane below to add a checkpoint.`;
+        board.appendChild(empty);
+      }
+
+      drawZigzag();
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ====================== ZIGZAG (saga only) ======================
+    function cardCenter(rankIdx, laneIdx) {
+      const styles = getComputedStyle(board);
+      const laneW = parseFloat(styles.getPropertyValue('--lane-width'));
+      const gap = parseFloat(styles.getPropertyValue('--gap'));
+      const headerH = parseFloat(styles.getPropertyValue('--header-h'));
+      const rankStep = parseFloat(styles.getPropertyValue('--rank-step'));
+      const cardH = parseFloat(styles.getPropertyValue('--card-h'));
+      return {
+        x: laneIdx * (laneW + gap) + laneW / 2,
+        y: headerH + rankIdx * rankStep + cardH / 2,
+      };
+    }
+
+    function drawZigzag() {
+      const cur = currentNode();
+      const sagaCards = cur.cards.filter(c => cur.lanes[c.lane].type === 'saga');
+      const points = sagaCards.map((c, i) => cardCenter(i, c.lane));
+      if (points.length < 2) { svg.innerHTML = ''; return; }
+      let d = `M ${points[0].x} ${points[0].y}`;
+      for (let i = 1; i < points.length; i++) {
+        const p0 = points[i - 1];
+        const p1 = points[i];
+        const dy = p1.y - p0.y;
+        const cp1 = { x: p0.x, y: p0.y + dy * 0.55 };
+        const cp2 = { x: p1.x, y: p1.y - dy * 0.55 };
+        d += ` C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${p1.x} ${p1.y}`;
+      }
+      const rect = board.getBoundingClientRect();
+      svg.setAttribute('width', rect.width);
+      svg.setAttribute('height', rect.height);
+      svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+      svg.innerHTML = `<path class="shadow" d="${d}" /><path d="${d}" />`;
+    }
+
+    // ====================== ZOOM NAV ======================
+    let zooming = false;
+    function zoomInto(cardId) {
+      if (zooming) return;
+      const cardEl = board.querySelector(`.card[data-id="${cardId}"]`);
+      if (!cardEl) return;
+      zooming = true;
+      const rect = cardEl.getBoundingClientRect();
+      const wrapRect = wrap.getBoundingClientRect();
+      const ox = rect.left + rect.width / 2 - wrapRect.left;
+      const oy = rect.top + rect.height / 2 - wrapRect.top;
+      wrap.style.transformOrigin = `${ox}px ${oy}px`;
+      wrap.style.transition = 'transform 320ms cubic-bezier(0.55, 0.05, 0.55, 1), opacity 240ms ease 60ms';
+      wrap.style.transform = 'scale(2.6)';
+      wrap.style.opacity = '0';
+      setTimeout(() => {
+        state.path.push(cardId);
+        wrap.style.transition = 'none';
+        wrap.style.transformOrigin = '50% 50%';
+        wrap.style.transform = 'scale(0.55)';
+        wrap.style.opacity = '0';
+        render();
+        requestAnimationFrame(() => {
+          wrap.style.transition = 'transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 240ms ease';
+          wrap.style.transform = 'scale(1)';
+          wrap.style.opacity = '1';
+          setTimeout(() => { zooming = false; wrap.style.transition = ''; wrap.style.transform = ''; }, 360);
+        });
+      }, 320);
+    }
+    function zoomTo(pathIdx) {
+      if (zooming) return;
+      if (pathIdx >= state.path.length - 1) return;
+      zooming = true;
+      wrap.style.transformOrigin = '50% 50%';
+      wrap.style.transition = 'transform 320ms cubic-bezier(0.55, 0.05, 0.55, 1), opacity 240ms ease 60ms';
+      wrap.style.transform = 'scale(0.45)';
+      wrap.style.opacity = '0';
+      setTimeout(() => {
+        state.path = state.path.slice(0, pathIdx + 1);
+        wrap.style.transition = 'none';
+        wrap.style.transform = 'scale(1.8)';
+        wrap.style.opacity = '0';
+        render();
+        requestAnimationFrame(() => {
+          wrap.style.transition = 'transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 240ms ease';
+          wrap.style.transform = 'scale(1)';
+          wrap.style.opacity = '1';
+          setTimeout(() => { zooming = false; wrap.style.transition = ''; wrap.style.transform = ''; }, 360);
+        });
+      }, 320);
+    }
+    function zoomOutOne() {
+      if (state.path.length > 1) zoomTo(state.path.length - 2);
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !document.activeElement?.isContentEditable) {
+        zoomOutOne();
+      }
+    });
+
+    // ====================== DRAG ======================
+    let drag = null;
+    function attachDrag(handleEl, cardEl, card) {
+      handleEl.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = cardEl.getBoundingClientRect();
+        const boardRect = board.getBoundingClientRect();
+        const cur = currentNode();
+        drag = {
+          card, el: cardEl,
+          offX: e.clientX - rect.left,
+          offY: e.clientY - rect.top,
+          boardRect,
+        };
+        cardEl.classList.add('dragging');
+        handleEl.setPointerCapture(e.pointerId);
+
+        const ph = document.createElement('div');
+        const targetLane = cur.lanes[card.lane];
+        ph.className = 'placeholder ' + targetLane.type;
+        ph.id = '_ph';
+        ph.style.setProperty('--lane-i', card.lane);
+        const sagaCards = cur.cards.filter(c => cur.lanes[c.lane].type === 'saga');
+        const inLane = cur.cards.filter(c => c.lane === card.lane);
+        const rankI = targetLane.type === 'saga' ? sagaCards.indexOf(card) : inLane.indexOf(card);
+        ph.style.setProperty('--rank-i', rankI);
+        board.appendChild(ph);
+      });
+      handleEl.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const x = e.clientX - drag.boardRect.left - drag.offX;
+        const y = e.clientY - drag.boardRect.top - drag.offY;
+        drag.el.style.transition = 'none';
+        drag.el.style.left = `${x}px`;
+        drag.el.style.top = `${y}px`;
+
+        const target = computeDropTarget(e.clientX, e.clientY);
+        const cur = currentNode();
+        const targetLane = cur.lanes[target.lane];
+        const ph = document.getElementById('_ph');
+        if (ph) {
+          ph.className = 'placeholder ' + targetLane.type;
+          ph.style.setProperty('--lane-i', target.lane);
+          ph.style.setProperty('--rank-i', target.rank);
+        }
+        document.querySelectorAll('.lane-bg').forEach((bg, i) => {
+          bg.classList.toggle('drop-target', i === target.lane);
+        });
+      });
+      handleEl.addEventListener('pointerup', (e) => {
+        if (!drag) return;
+        const target = computeDropTarget(e.clientX, e.clientY);
+        commitDrop(drag.card, target.lane, target.rank);
+        drag.el.classList.remove('dragging');
+        drag.el.style.transition = '';
+        drag.el.style.left = '';
+        drag.el.style.top = '';
+        const ph = document.getElementById('_ph');
+        if (ph) ph.remove();
+        document.querySelectorAll('.lane-bg').forEach(bg => bg.classList.remove('drop-target'));
+        drag = null;
+      });
+      handleEl.addEventListener('pointercancel', () => {
+        if (!drag) return;
+        drag.el.classList.remove('dragging');
+        const ph = document.getElementById('_ph');
+        if (ph) ph.remove();
+        document.querySelectorAll('.lane-bg').forEach(bg => bg.classList.remove('drop-target'));
+        drag = null;
+        render();
+      });
+    }
+    function computeDropTarget(clientX, clientY) {
+      const cur = currentNode();
+      const styles = getComputedStyle(board);
+      const laneW = parseFloat(styles.getPropertyValue('--lane-width'));
+      const gap = parseFloat(styles.getPropertyValue('--gap'));
+      const headerH = parseFloat(styles.getPropertyValue('--header-h'));
+      const rankStep = parseFloat(styles.getPropertyValue('--rank-step'));
+      const compactStep = parseFloat(styles.getPropertyValue('--compact-step'));
+      const boardRect = board.getBoundingClientRect();
+      const x = clientX - boardRect.left;
+      const y = clientY - boardRect.top - headerH;
+      const lane = Math.max(0, Math.min(cur.lanes.length - 1, Math.floor(x / (laneW + gap))));
+      const targetLane = cur.lanes[lane];
+      let filteredLen, step;
+      if (targetLane.type === 'saga') {
+        const sagaCards = cur.cards.filter(c => cur.lanes[c.lane].type === 'saga');
+        filteredLen = sagaCards.length;
+        step = rankStep;
+      } else {
+        filteredLen = cur.cards.filter(c => c.lane === lane).length;
+        step = compactStep;
+      }
+      const rank = Math.max(0, Math.min(filteredLen, Math.round(y / step)));
+      return { lane, rank };
+    }
+    function commitDrop(card, newLaneIdx, newRank) {
+      const cur = currentNode();
+      const oldIdx = cur.cards.indexOf(card);
+      cur.cards.splice(oldIdx, 1);
+      card.lane = newLaneIdx;
+      const newLane = cur.lanes[newLaneIdx];
+      let filtered;
+      if (newLane.type === 'saga') {
+        filtered = cur.cards.filter(c => cur.lanes[c.lane].type === 'saga');
+      } else {
+        filtered = cur.cards.filter(c => c.lane === newLaneIdx);
+      }
+      const clamped = Math.max(0, Math.min(filtered.length, newRank));
+      let insertAt;
+      if (clamped >= filtered.length) insertAt = cur.cards.length;
+      else insertAt = cur.cards.indexOf(filtered[clamped]);
+      cur.cards.splice(insertAt, 0, card);
+      render();
+    }
+
+    // ====================== ADD ======================
+    function onClickToAdd(e, laneIdx) {
+      const cur = currentNode();
+      const lane = cur.lanes[laneIdx];
+      const styles = getComputedStyle(board);
+      const headerH = parseFloat(styles.getPropertyValue('--header-h'));
+      const rankStep = parseFloat(styles.getPropertyValue('--rank-step'));
+      const compactStep = parseFloat(styles.getPropertyValue('--compact-step'));
+      const boardRect = board.getBoundingClientRect();
+      const y = e.clientY - boardRect.top - headerH;
+      const step = lane.type === 'saga' ? rankStep : compactStep;
+      let rank = Math.max(0, Math.round(y / step));
+      // length within the appropriate filtered list
+      let filteredLen;
+      if (lane.type === 'saga') {
+        filteredLen = cur.cards.filter(c => cur.lanes[c.lane].type === 'saga').length;
+      } else {
+        filteredLen = cur.cards.filter(c => c.lane === laneIdx).length;
+      }
+      rank = Math.min(rank, filteredLen);
+
+      const input = document.createElement('textarea');
+      input.className = 'new-input ' + lane.type;
+      input.style.setProperty('--lane-i', laneIdx);
+      input.style.setProperty('--rank-i', rank);
+      input.placeholder = lane.type === 'saga' ? 'New checkpoint…' : 'Capture…';
+      board.appendChild(input);
+      input.focus();
+
+      const commit = () => {
+        const text = input.value.trim();
+        input.remove();
+        if (text) {
+          const c = makeChild(text, laneIdx);
+          let filtered;
+          if (lane.type === 'saga') filtered = cur.cards.filter(x => cur.lanes[x.lane].type === 'saga');
+          else filtered = cur.cards.filter(x => x.lane === laneIdx);
+          let insertAt;
+          if (rank >= filtered.length) insertAt = cur.cards.length;
+          else insertAt = cur.cards.indexOf(filtered[rank]);
+          cur.cards.splice(insertAt, 0, c);
+          render();
+        }
+      };
+      const cancel = () => { input.remove(); };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); commit(); }
+        if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+      });
+    }
+    function addLane(n) {
+      n.lanes.push({ id: newId('l'), title: 'New direction', type: 'saga', stance: '' });
+      render();
+    }
+    function toggleLaneType(laneIdx) {
+      const cur = currentNode();
+      const lane = cur.lanes[laneIdx];
+      lane.type = lane.type === 'saga' ? 'backlog' : 'saga';
+      render();
+    }
+
+    // ====================== STATUS ======================
+    function cycleStatus(cardId) {
+      const cur = currentNode();
+      const card = cur.cards.find(c => c.id === cardId);
+      if (!card) return;
+      if (card.status === 'todo') {
+        card.status = 'doing';
+        render();
+      } else if (card.status === 'doing') {
+        card.status = 'done';
+        const idx = cur.cards.indexOf(card);
+        cur.cards.splice(idx, 1);
+        cur.archived.push({ id: card.id, title: card.title, lane: card.lane, _node: card });
+        render();
+      }
+    }
+    function revertStatus(cardId) {
+      const cur = currentNode();
+      const card = cur.cards.find(c => c.id === cardId);
+      if (!card) return;
+      card.status = 'todo';
+      render();
+    }
+    function unarchive(parent, id) {
+      const idx = parent.archived.findIndex(a => a.id === id);
+      if (idx < 0) return;
+      const a = parent.archived[idx];
+      parent.archived.splice(idx, 1);
+      const restored = a._node || makeChild(a.title, a.lane);
+      restored.status = 'todo';
+      restored.lane = a.lane;
+      parent.cards.unshift(restored);
+      render();
+    }
+
+    // ====================== INIT ======================
+    render();
+    window.addEventListener('resize', drawZigzag);
+    document.addEventListener('click', (e) => {
+      if (state.openArchive !== null && !e.target.closest('.lane-archive, .archive-pop')) {
+        state.openArchive = null;
+        render();
+      }
+    });
+  </script>
+</body>
+</html>

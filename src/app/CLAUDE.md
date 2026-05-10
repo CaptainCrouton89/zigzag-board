@@ -1,0 +1,1 @@
+- `@theme inline` in `globals.css` makes Tailwind resolve token values statically — `bg-bg`, `text-accent`, etc. emit literal hex, not `var()`. Overriding `:root` CSS vars at runtime (e.g. dark mode) updates `var(--bg)` in inline styles but silently leaves Tailwind utility classes unchanged. To theme dynamically, update the `@theme inline` values, not just `:root`.
