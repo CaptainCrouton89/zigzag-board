@@ -15,7 +15,9 @@ export interface Credentials {
   activeOrgId?: string | null
 }
 
-const DEFAULT_API_URL = 'https://api.zigzag.app'
+// Production Railway service. Override per-shell with ZIGZAG_API_URL when
+// pointing at a local dev server (typically http://localhost:8787).
+const DEFAULT_API_URL = 'https://server-production-64f5.up.railway.app'
 
 function configDir(): string {
   // XDG_CONFIG_HOME wins when set (Linux convention); macOS users typically

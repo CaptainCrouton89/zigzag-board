@@ -5,7 +5,9 @@ A command-line interface for [Zigzag Board](https://github.com/CaptainCrouton89/
 ## Install
 
 ```bash
-npm install -g @zigzagboard/cli
+npm install -g @crouton-kit/zigzag
+# or one-shot:
+npx @crouton-kit/zigzag <command>
 ```
 
 For local development from this repo:
@@ -19,7 +21,7 @@ npm link
 
 ## Configure
 
-Default API URL is `https://api.zigzag.app`. To target a local dev server:
+Default API URL is the production Railway service. To target a local dev server:
 
 ```bash
 export ZIGZAG_API_URL=http://localhost:8787

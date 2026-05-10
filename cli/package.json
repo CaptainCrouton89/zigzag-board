@@ -1,8 +1,29 @@
 {
-  "name": "@zigzagboard/cli",
+  "name": "@crouton-kit/zigzag",
   "version": "0.1.0",
   "description": "Command-line interface for the Zigzag collaborative board. Designed so an AI agent can read and modify a user's board on their behalf.",
   "type": "module",
+  "license": "MIT",
+  "author": "Silas Rhyneer",
+  "homepage": "https://github.com/CaptainCrouton89/zigzagboard#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CaptainCrouton89/zigzagboard.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/CaptainCrouton89/zigzagboard/issues"
+  },
+  "keywords": [
+    "zigzag",
+    "zigzagboard",
+    "cli",
+    "kanban",
+    "board",
+    "agent",
+    "ai",
+    "claude"
+  ],
   "bin": {
     "zigzag": "./dist/index.js"
   },
@@ -14,7 +35,11 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "commander": "12.1.0",
@@ -27,6 +52,7 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ]
 }
