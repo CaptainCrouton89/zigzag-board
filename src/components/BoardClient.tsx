@@ -7,6 +7,7 @@ import { Breadcrumb } from '@/components/board/Breadcrumb'
 import { Board } from '@/components/board/Board'
 import { OrgSwitcher } from '@/components/board/OrgSwitcher'
 import { useBoard } from '@/lib/board/useBoard'
+import { getNodeByPath } from '@/lib/board/state'
 import { authClient } from '@/lib/auth-client'
 
 interface BoardClientProps {
@@ -45,6 +46,9 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const { data: activeOrg } = authClient.useActiveOrganization()
   const orgName = activeOrg ? activeOrg.name : 'Board'
+  const isZoomed = appState.path.length > 1
+  const currentNode = isZoomed ? getNodeByPath(appState.root, appState.path) : null
+  const currentTitle = currentNode && currentNode.title ? currentNode.title : 'Untitled'
 
   // Mirror appState.path so popstate / esc / breadcrumb handlers can read the
   // current depth without re-binding on every zoom.
@@ -206,6 +210,13 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
           onRemovePrinciple={callbacks.onRemovePrinciple}
         />
         <main className="flex-1 overflow-auto p-9">
+          {isZoomed && (
+            <div className="max-w-[920px] mx-auto mb-6">
+              <h1 className="text-[15px] leading-[1.45] text-text-muted whitespace-pre-wrap">
+                {currentTitle}
+              </h1>
+            </div>
+          )}
           <div ref={wrapRef} className="w-max mx-auto">
             <Board
               appState={appState}
