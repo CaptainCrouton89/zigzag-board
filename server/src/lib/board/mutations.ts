@@ -330,25 +330,269 @@ export function removeLane(
   return result
 }
 
+// ---------- SET_CARD_STATUS ----------
+// Port of web's setStatus. Status transitions: todo → doing → done.
+// The doing → done transition archives the card (snapshots to JSON, pushes
+// to parent.get('archived') Y.Array, removes from parent.cards).
+// done → ? is N/A: archived items are not reachable as live cards.
+const CARD_FROM_SNAPSHOT_MAX_DEPTH = 64
+
+function cardFromSnapshot(snap: Record<string, unknown>, depth = 0): Y.Map<unknown> {
+  if (depth > CARD_FROM_SNAPSHOT_MAX_DEPTH) return new Y.Map<unknown>()
+  const card = new Y.Map<unknown>()
+  card.set('id', String(snap.id))
+  card.set('title', snap.title !== undefined ? String(snap.title) : '')
+  card.set('status', snap.status !== undefined ? (snap.status as CardStatus) : 'todo')
+  card.set('laneId', snap.laneId !== undefined ? String(snap.laneId) : '')
+  card.set('order', snap.order !== undefined ? String(snap.order) : 'a0')
+  card.set('createdAt', snap.createdAt !== undefined ? Number(snap.createdAt) : Date.now())
+
+  const principles = new Y.Array<string>()
+  if (Array.isArray(snap.principles)) {
+    principles.push((snap.principles as string[]).map(String))
+  }
+  card.set('principles', principles)
+
+  const archived = new Y.Array<Y.Map<unknown>>()
+  if (Array.isArray(snap.archived)) {
+    for (const a of snap.archived as Array<Record<string, unknown>>) {
+      const item = new Y.Map<unknown>()
+      item.set('id', String(a.id))
+      item.set('title', String(a.title))
+      item.set('laneId', String(a.laneId))
+      item.set('node', a.node)
+      archived.push([item])
+    }
+  }
+  card.set('archived', archived)
+
+  const lanes = new Y.Map<Y.Map<unknown>>()
+  if (snap.lanes && typeof snap.lanes === 'object') {
+    for (const [lid, lraw] of Object.entries(snap.lanes as Record<string, Record<string, unknown>>)) {
+      const lm = new Y.Map<unknown>()
+      lm.set('id', lraw.id !== undefined ? String(lraw.id) : lid)
+      lm.set('title', lraw.title !== undefined ? String(lraw.title) : '')
+      lm.set('type', lraw.type !== undefined ? (lraw.type as LaneType) : 'saga')
+      if (lraw.stance !== undefined) lm.set('stance', String(lraw.stance))
+      if (lraw.sort !== undefined) lm.set('sort', lraw.sort as SortMode)
+      lm.set('order', lraw.order !== undefined ? String(lraw.order) : 'a0')
+      lanes.set(lid, lm)
+    }
+  }
+  card.set('lanes', lanes)
+
+  const cards = new Y.Map<Y.Map<unknown>>()
+  if (snap.cards && typeof snap.cards === 'object') {
+    for (const [cid, craw] of Object.entries(snap.cards as Record<string, Record<string, unknown>>)) {
+      cards.set(cid, cardFromSnapshot(craw, depth + 1))
+    }
+  }
+  card.set('cards', cards)
+
+  return card
+}
+
+export function setCardStatus(
+  ydoc: Y.Doc, path: string[], cardId: string, status: CardStatus,
+): 'ok' | 'not_found' {
+  let result: 'ok' | 'not_found' = 'not_found'
+  ydoc.transact(() => {
+    const root = ydoc.getMap('root') as Y.Map<unknown>
+    const parent = getNodeYMapByPath(root, path)
+    const card = findCardYMap(parent, cardId)
+    if (!card) return
+    const cur = card.get('status') as CardStatus
+    if (cur === 'todo') {
+      card.set('status', 'doing')
+      result = 'ok'
+      return
+    }
+    if (cur === 'doing') {
+      // doing → done: snapshot to plain JSON, push into archived Y.Array as
+      // a Y.Map wrapper, then delete the live card. Mirrors web setStatus.
+      const snap = card.toJSON() as Record<string, unknown>
+      let archived = parent.get('archived')
+      if (!(archived instanceof Y.Array)) {
+        archived = new Y.Array<Y.Map<unknown>>()
+        parent.set('archived', archived)
+      }
+      const item = new Y.Map<unknown>()
+      item.set('id', String(card.get('id')))
+      item.set('title', String(card.get('title')))
+      item.set('laneId', String(card.get('laneId')))
+      item.set('node', snap)
+      ;(archived as Y.Array<Y.Map<unknown>>).push([item])
+
+      const cards = parent.get('cards')
+      if (cards instanceof Y.Map) {
+        ;(cards as Y.Map<Y.Map<unknown>>).delete(String(card.get('id')))
+      }
+      result = 'ok'
+    }
+    // done → ? — N/A: archived items are not reachable as live cards.
+  }, ORIGIN_LOCAL)
+  return result
+}
+
+// ---------- RESTORE_ARCHIVED ----------
+// Port of web's restoreArchived. Restores an archived item as a live card
+// with status reset to 'todo'. If the original lane no longer exists, falls
+// back to the first saga lane (or first lane overall).
+export function restoreArchived(
+  ydoc: Y.Doc, path: string[], archivedId: string,
+): 'ok' | 'not_found' {
+  let result: 'ok' | 'not_found' = 'not_found'
+  ydoc.transact(() => {
+    const root = ydoc.getMap('root') as Y.Map<unknown>
+    const parent = getNodeYMapByPath(root, path)
+    const archived = parent.get('archived')
+    if (!(archived instanceof Y.Array)) return
+    const arr = archived as Y.Array<Y.Map<unknown>>
+
+    let foundIdx = -1
+    let found: Y.Map<unknown> | null = null
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr.get(i)
+      if (item instanceof Y.Map && item.get('id') === archivedId) {
+        foundIdx = i
+        found = item
+        break
+      }
+    }
+    if (!found || foundIdx < 0) return
+
+    const snap = found.get('node') as Record<string, unknown>
+    const archivedLaneId = String(found.get('laneId'))
+
+    // Validate target lane still exists; fall back to first lane sorted by
+    // (order, saga-first) if not.
+    const lanes = parent.get('lanes')
+    let targetLaneId = archivedLaneId
+    if (!(lanes instanceof Y.Map) || !(lanes as Y.Map<Y.Map<unknown>>).get(archivedLaneId)) {
+      const sorted = lanesSorted(parent)
+      const sagas = sorted.filter(l => l.get('type') === 'saga')
+      const fallback = sagas[0] ?? sorted[0]
+      if (!fallback) return       // no lanes exist — nothing to restore into
+      targetLaneId = String(fallback.get('id'))
+    }
+
+    // Compute fresh order at end of target lane.
+    const sibs = siblingsByLane(parent, targetLaneId)
+    const lastOrder = sibs.length ? String(sibs[sibs.length - 1].get('order')) : null
+    const newOrder = generateKeyBetween(lastOrder, null)
+
+    // Mutate the snapshot in-place before reifying — restored cards always
+    // come back as 'todo', under the validated lane, with a fresh order.
+    snap.status = 'todo'
+    snap.laneId = targetLaneId
+    snap.order = newOrder
+
+    const restored = cardFromSnapshot(snap)
+    // See web nestCard: must read snap.id, not restored.get('id'), prior to attach.
+    const restoredId = String(snap.id)
+    let cards = parent.get('cards')
+    if (!(cards instanceof Y.Map)) {
+      cards = new Y.Map<Y.Map<unknown>>()
+      parent.set('cards', cards)
+    }
+    ;(cards as Y.Map<Y.Map<unknown>>).set(restoredId, restored)
+
+    arr.delete(foundIdx, 1)
+    result = 'ok'
+  }, ORIGIN_LOCAL)
+  return result
+}
+
+// ---------- MOVE_LANE ----------
+// Reorders a lane within its parent using fractional-indexing. Positions are
+// expressed as (before, after) neighbor ids — same convention as moveCardTo.
+// No equivalent in the web mutations.ts (web drags lanes client-side only).
+export function moveLane(
+  ydoc: Y.Doc, path: string[],
+  laneId: string,
+  before: string | null,
+  after: string | null,
+): boolean {
+  let ok = false
+  ydoc.transact(() => {
+    const root = ydoc.getMap('root') as Y.Map<unknown>
+    const parent = getNodeYMapByPath(root, path)
+    const lanes = parent.get('lanes')
+    if (!(lanes instanceof Y.Map)) return
+    const lane = (lanes as Y.Map<Y.Map<unknown>>).get(laneId)
+    if (!lane) return
+
+    // Exclude self from sibling list when computing neighbors — same pattern
+    // as moveCardTo filtering out the card being moved.
+    const sibs = lanesSorted(parent).filter(l => l.get('id') !== laneId)
+    const { prev, next } = resolveNeighbors(sibs, before, after)
+    const order = generateKeyBetween(
+      prev ? String(prev.get('order')) : null,
+      next ? String(next.get('order')) : null,
+    )
+    lane.set('order', order)
+    ok = true
+  }, ORIGIN_LOCAL)
+  return ok
+}
+
 // ---------- READ: serialize board to JSON ----------
 // Returns the shape board.ts hands back to the CLI: lanes ordered by their
 // fractional key; cards inside each lane ordered by their key (with the
 // id-tiebreaker that mirrors the web's render comparator).
 export type CardJson = { id: string; text: string; status: CardStatus; order: string }
 export type LaneJson = { id: string; name: string; type: LaneType; cards: CardJson[] }
+export type ArchivedJson = {
+  id: string
+  archivedAt: number
+  node: { id: string; text: string; status: CardStatus; laneId: string }
+}
 
-export function readBoard(ydoc: Y.Doc): { lanes: LaneJson[] } {
-  // Trust the Y.Doc shape: every lane and card has the canonical fields
-  // populated by addLaneAt / addCardAt or seeded by hocuspocus.ts. The
-  // web copy of these functions casts identically without fallbacks; if
-  // the shape ever drifts, the cast surfaces a runtime mismatch loudly
-  // rather than silently substituting "" or "saga".
+export function readBoard(
+  ydoc: Y.Doc,
+  path: string[] = ['root'],
+): { path: string[]; lanes: LaneJson[]; archived: ArchivedJson[]; notFound?: true } {
   const root = ydoc.getMap('root') as Y.Map<unknown>
-  const lanes = lanesSorted(root)
+
+  // Walk path; detect missing segments.
+  let node: Y.Map<unknown> = root
+  for (let i = 1; i < path.length; i++) {
+    const cards = node.get('cards')
+    if (!(cards instanceof Y.Map)) return { path, lanes: [], archived: [], notFound: true }
+    const next = (cards as Y.Map<Y.Map<unknown>>).get(path[i])
+    if (!(next instanceof Y.Map)) return { path, lanes: [], archived: [], notFound: true }
+    node = next
+  }
+
+  const lanes = lanesSorted(node)
+
+  // Serialize archived items.
+  const archivedRaw = node.get('archived')
+  const archivedOut: ArchivedJson[] = []
+  if (archivedRaw instanceof Y.Array) {
+    const arr = archivedRaw as Y.Array<Y.Map<unknown>>
+    for (let i = 0; i < arr.length; i++) {
+      const item = arr.get(i)
+      if (!(item instanceof Y.Map)) continue
+      const nodeSnap = item.get('node') as Record<string, unknown> | undefined
+      archivedOut.push({
+        id: String(item.get('id')),
+        archivedAt: nodeSnap?.createdAt !== undefined ? Number(nodeSnap.createdAt) : 0,
+        node: {
+          id: String(item.get('id')),
+          text: String(item.get('title')),
+          status: 'done' as CardStatus,
+          laneId: String(item.get('laneId')),
+        },
+      })
+    }
+  }
+
   return {
+    path,
     lanes: lanes.map(l => {
       const laneId = String(l.get('id'))
-      const sibs = siblingsByLane(root, laneId)
+      const sibs = siblingsByLane(node, laneId)
       return {
         id: laneId,
         name: String(l.get('title')),
@@ -361,5 +605,6 @@ export function readBoard(ydoc: Y.Doc): { lanes: LaneJson[] } {
         })),
       }
     }),
+    archived: archivedOut,
   }
 }
