@@ -117,7 +117,9 @@ async function getMembership(userId: string, organizationId: string) {
 
 // GET current invite URL for an org (owner-only). Returns the same `inviteUrl`
 // shape the create endpoint returns so the frontend can reuse a single copy/
-// share component.
+// share component. Backfills a code if none exists — covers orgs created
+// before the POST /api/org route added the orgInviteCode insert, or created
+// via better-auth's organization plugin directly.
 app.get('/:id/invite', async (c) => {
   const id = c.req.param('id')
   const m = await getMembership(c.var.user.id, id)
@@ -125,8 +127,14 @@ app.get('/:id/invite', async (c) => {
   if (m.role !== 'owner') return c.json({ error: 'owner only' }, 403)
   const rows = await db.select({ code: orgInviteCode.code })
     .from(orgInviteCode).where(eq(orgInviteCode.organizationId, id)).limit(1)
-  if (rows.length === 0) return c.json({ error: 'no invite' }, 404)
-  return c.json({ inviteUrl: `${WEB_ORIGIN}/invite/${rows[0].code}` })
+  let code: string
+  if (rows.length === 0) {
+    code = nanoid(12)
+    await db.insert(orgInviteCode).values({ organizationId: id, code })
+  } else {
+    code = rows[0].code
+  }
+  return c.json({ inviteUrl: `${WEB_ORIGIN}/invite/${code}` })
 })
 
 // Rotate the invite code (owner-only). Single code per org (PK on

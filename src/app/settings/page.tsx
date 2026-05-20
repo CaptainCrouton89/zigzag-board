@@ -704,9 +704,9 @@ function OrganizationPanel({ orgId, orgName, userId }: { orgId: string; orgName:
                 )}
               </div>
             </div>
-          ) : (
-            <p className="text-[12.5px] text-text-muted">{inviteLoading ? 'Loading…' : 'No invite link.'}</p>
-          )}
+          ) : !inviteError ? (
+            <p className="text-[12.5px] text-text-muted">Loading…</p>
+          ) : null}
         </Section>
       )}
 
