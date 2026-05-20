@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Card as CardType, AppState, SortMode } from '@/lib/board/types';
 import { getNodeByPath, cycleSortMode } from '@/lib/board/state';
 import { Card } from './Card';
@@ -20,10 +20,14 @@ interface Props {
   appState: AppState;
   onAddCard: (laneId: string, rank: number, title: string) => void;
   onMoveCard: (cardId: string, newLaneId: string, newRank: number) => void;
+  onNestCard: (cardId: string, targetCardId: string) => void;
+  onUnnestCard: (cardId: string, toPathIdx: number) => void;
   onSetStatus: (cardId: string) => void;
   onRevertStatus: (cardId: string) => void;
   onSetCardTitle: (cardId: string, title: string) => void;
+  onDeleteCard: (cardId: string) => void;
   onAddLane: () => void;
+  onDeleteLane: (laneId: string) => 'ok' | 'not_found' | 'non_empty';
   onToggleLaneType: (laneId: string) => void;
   onSetLaneTitle: (laneId: string, title: string) => void;
   onSetLaneStance: (laneId: string, stance: string) => void;
@@ -54,18 +58,62 @@ function getBacklogCards(node: CardType, laneId: string): CardType[] {
   return cards;
 }
 
+type DropTarget =
+  | { kind: 'reorder'; laneId: string; rank: number }
+  | { kind: 'nest'; targetCardId: string }
+  | { kind: 'unnest'; toPathIdx: number };
+
+// Inner band of a card's body that counts as a nest target. Outside this band
+// (top/bottom edges, left/right slivers) falls through to the reorder grid so
+// the existing between-rank drop behavior still works.
+const NEST_BAND = 0.6;
+
 function computeDropTarget(
   clientX: number,
   clientY: number,
   boardEl: HTMLDivElement,
   node: CardType,
-): { laneId: string; rank: number } {
+  draggedCardId: string,
+  sagaCardIds: Set<string>,
+): { target: DropTarget; overCard: boolean } {
+  // 1. Unnest first: did the cursor land on the floating "Move out" bar?
+  const el = typeof document !== 'undefined'
+    ? document.elementFromPoint(clientX, clientY) as HTMLElement | null
+    : null;
+  if (el) {
+    const unnestPill = el.closest<HTMLElement>('[data-unnest-idx]');
+    if (unnestPill) {
+      const idx = Number(unnestPill.dataset.unnestIdx);
+      if (Number.isFinite(idx)) return { target: { kind: 'unnest', toPathIdx: idx }, overCard: false };
+    }
+  }
+
+  // 2. Nest: cursor in the inner band of a non-dragged saga card. The dragged
+  // card has `pointer-events: none` while dragging so elementFromPoint sees
+  // the card BELOW it. `overCard` is reported so the eager-reorder loop in
+  // onMove can suppress reorder commits while the cursor sits over another
+  // card body (in or out of the nest band) — preventing the cards-under-cursor
+  // race that would otherwise shift the layout out from under the gesture.
+  const cardEl = el?.closest<HTMLElement>('[data-id]') ?? null;
+  const hoverId = cardEl?.dataset.id;
+  const overCard = !!cardEl && hoverId !== draggedCardId && !!hoverId;
+  if (cardEl && hoverId && hoverId !== draggedCardId && sagaCardIds.has(hoverId)) {
+    const r = cardEl.getBoundingClientRect();
+    const padX = r.width * (1 - NEST_BAND) / 2;
+    const padY = r.height * (1 - NEST_BAND) / 2;
+    const inBand =
+      clientX >= r.left + padX && clientX <= r.right - padX &&
+      clientY >= r.top + padY && clientY <= r.bottom - padY;
+    if (inBand) return { target: { kind: 'nest', targetCardId: hoverId }, overCard };
+  }
+
+  // 3. Reorder: existing lane/rank grid math.
   const boardRect = boardEl.getBoundingClientRect();
   const x = clientX - boardRect.left;
   const y = clientY - boardRect.top - HEADER_H;
   const i = Math.max(0, Math.min(node.lanes.length - 1, Math.floor(x / (LANE_WIDTH + GAP))));
   const targetLane = node.lanes[i];
-  if (!targetLane) return { laneId: '', rank: 0 };
+  if (!targetLane) return { target: { kind: 'reorder', laneId: '', rank: 0 }, overCard };
   const targetLaneId = targetLane.id;
   let filteredLen: number;
   let step: number;
@@ -77,17 +125,21 @@ function computeDropTarget(
     step = COMPACT_STEP;
   }
   const rank = Math.max(0, Math.min(filteredLen, Math.floor(y / step)));
-  return { laneId: targetLaneId, rank };
+  return { target: { kind: 'reorder', laneId: targetLaneId, rank }, overCard };
 }
 
 export function Board({
   appState,
   onAddCard,
   onMoveCard,
+  onNestCard,
+  onUnnestCard,
   onSetStatus,
   onRevertStatus,
   onSetCardTitle,
+  onDeleteCard,
   onAddLane,
+  onDeleteLane,
   onToggleLaneType,
   onSetLaneTitle,
   onSetLaneStance,
@@ -98,6 +150,7 @@ export function Board({
 }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [newCard, setNewCard] = useState<NewCardInput | null>(null);
   const newCardInputRef = useRef<HTMLTextAreaElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -106,6 +159,7 @@ export function Board({
   const node = getNodeByPath(appState.root, appState.path);
 
   const sagaCards = getSagaCards(node);
+  const sagaCardIds = useMemo(() => new Set(sagaCards.map(c => c.id)), [sagaCards]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent, cardId: string) => {
     if (e.button !== 0) return;
@@ -126,14 +180,6 @@ export function Board({
     dragRef.current = initial;
     setDrag(initial);
 
-    // Track the last (laneId, rank) sent to onMoveCard to avoid issuing
-    // duplicate Y.Doc transactions: the final pointermove and the immediately-
-    // following pointerup almost always resolve to the same drop target,
-    // which would otherwise trigger two transacts → two snapshot rebuilds →
-    // two peer broadcasts per drop.
-    let lastLaneId: string | null = null;
-    let lastRank = -1;
-
     const cleanup = () => {
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
@@ -141,6 +187,7 @@ export function Board({
       window.removeEventListener('blur', onWindowBlur);
       dragRef.current = null;
       setDrag(null);
+      setDropTarget(null);
     };
 
     const onMove = (me: PointerEvent) => {
@@ -156,35 +203,45 @@ export function Board({
       dragRef.current = next;
       setDrag(next);
 
-      const target = computeDropTarget(me.clientX, me.clientY, b, node);
-      if (target.laneId !== lastLaneId || target.rank !== lastRank) {
-        lastLaneId = target.laneId;
-        lastRank = target.rank;
-        onMoveCard(d.cardId, target.laneId, target.rank);
-      }
+      const { target } = computeDropTarget(me.clientX, me.clientY, b, node, d.cardId, sagaCardIds);
+      setDropTarget(target);
+      // No eager mid-drag mutations: the dragged card already follows the
+      // cursor via `position: fixed`, which is enough visual feedback. Firing
+      // reorder mutations mid-drag would shift the other cards (and their
+      // nest bands) out from under the cursor, making the nest gesture race
+      // with the reorder gesture. All commits happen on pointerup.
     };
 
     const onUp = (ue: PointerEvent) => {
-      // Stamp the final drop coordinates onto the card's DOM so its drop animation
-      // can use the actual pointerup position as the FROM. The cursor often moves a
-      // few px between the last pointermove and pointerup; without this, the FLIP
-      // animates from a stale position and visibly overshoots in one direction.
       const d = dragRef.current;
       const b = boardRef.current;
-      if (d && b) {
-        const cardEl = b.querySelector<HTMLElement>(`[data-id="${cardId}"]`);
-        if (cardEl) {
-          cardEl.dataset.dropX = String(ue.clientX - d.offX);
-          cardEl.dataset.dropY = String(ue.clientY - d.offY);
-        }
+      if (!b || !d) {
+        cleanup();
+        return;
+      }
+      const { target } = computeDropTarget(ue.clientX, ue.clientY, b, node, d.cardId, sagaCardIds);
+      if (target.kind === 'nest') {
+        cleanup();
+        onNestCard(cardId, target.targetCardId);
+        return;
+      }
+      if (target.kind === 'unnest') {
+        cleanup();
+        onUnnestCard(cardId, target.toPathIdx);
+        return;
+      }
+      // Reorder branch: stamp the final drop coordinates onto the card's DOM
+      // so its drop animation can use the actual pointerup position as the FROM.
+      // The cursor often moves a few px between the last pointermove and pointerup;
+      // without this, the FLIP animates from a stale position and visibly
+      // overshoots in one direction.
+      const cardEl = b.querySelector<HTMLElement>(`[data-id="${cardId}"]`);
+      if (cardEl) {
+        cardEl.dataset.dropX = String(ue.clientX - d.offX);
+        cardEl.dataset.dropY = String(ue.clientY - d.offY);
       }
       cleanup();
-      if (b) {
-        const target = computeDropTarget(ue.clientX, ue.clientY, b, node);
-        if (target.laneId !== lastLaneId || target.rank !== lastRank) {
-          onMoveCard(cardId, target.laneId, target.rank);
-        }
-      }
+      onMoveCard(cardId, target.laneId, target.rank);
     };
 
     const onWindowBlur = () => cleanup();
@@ -193,7 +250,7 @@ export function Board({
     document.addEventListener('pointerup', onUp);
     document.addEventListener('pointercancel', onUp);
     window.addEventListener('blur', onWindowBlur);
-  }, [node, onMoveCard]);
+  }, [node, sagaCardIds, onMoveCard, onNestCard, onUnnestCard]);
 
   // Defensive: if the page becomes hidden mid-drag, clear the drag state.
   useEffect(() => {
@@ -268,27 +325,70 @@ export function Board({
     );
   }
 
+  // "Move out" floating bar: visible only when zoomed in (path has at least
+  // one ancestor) AND a drag is active. Each pill targets an ancestor in the
+  // current path; drop on it to unnest the dragged card up to that level.
+  const unnestVisible = drag !== null && appState.path.length > 1;
+
   return (
     <div className="relative" style={{ width: boardW, height: boardH }} ref={boardRef}>
+      {unnestVisible && (
+        <div
+          className="fixed top-3 left-1/2 -translate-x-1/2 z-[999] flex items-center gap-2 px-3 py-2 bg-bg/95 backdrop-blur-sm border border-border rounded-full shadow-[var(--shadow-2)]"
+        >
+          <span className="text-[10px] uppercase tracking-wide text-text-dim font-semibold pr-1">
+            Move out to
+          </span>
+          {appState.path.slice(0, -1).map((id, i) => {
+            const ancestor = getNodeByPath(appState.root, appState.path.slice(0, i + 1));
+            let label: string;
+            if (id === 'root') label = '↑ Board';
+            else if (ancestor.title && ancestor.title.trim()) label = ancestor.title;
+            else label = 'Untitled';
+            const isHover = dropTarget?.kind === 'unnest' && dropTarget.toPathIdx === i;
+            return (
+              <span
+                key={id}
+                data-unnest-idx={i}
+                title={label}
+                className={[
+                  'px-3 py-[5px] rounded-full text-[12px] font-medium transition-colors max-w-[200px] truncate',
+                  isHover
+                    ? 'bg-accent text-white border border-accent shadow-[0_0_0_2px_var(--accent-glow)]'
+                    : 'bg-surface text-text-muted border border-border hover:bg-bg-soft',
+                ].join(' ')}
+              >
+                {label}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* Lane backgrounds + headers */}
-      {node.lanes.map((lane, i) => (
-        <Lane
-          key={lane.id}
-          lane={lane}
-          laneIdx={i}
-          archived={node.archived}
-          isArchiveOpen={appState.openArchive === lane.id}
-          onToggleType={() => onToggleLaneType(lane.id)}
-          onSetTitle={title => onSetLaneTitle(lane.id, title)}
-          onSetStance={stance => onSetLaneStance(lane.id, stance)}
-          onCycleSort={() => onSetLaneSort(lane.id, cycleSortMode(lane.sort))}
-          onToggleArchive={() => onSetOpenArchive(appState.openArchive === lane.id ? null : lane.id)}
-          onRestoreArchived={onRestoreArchived}
-          onAddLane={onAddLane}
-          isLast={i === node.lanes.length - 1}
-          laneCount={node.lanes.length}
-        />
-      ))}
+      {node.lanes.map((lane, i) => {
+        const cardCount = node.cards.filter(c => c.laneId === lane.id).length;
+        return (
+          <Lane
+            key={lane.id}
+            lane={lane}
+            laneIdx={i}
+            archived={node.archived}
+            isArchiveOpen={appState.openArchive === lane.id}
+            onToggleType={() => onToggleLaneType(lane.id)}
+            onSetTitle={title => onSetLaneTitle(lane.id, title)}
+            onSetStance={stance => onSetLaneStance(lane.id, stance)}
+            onCycleSort={() => onSetLaneSort(lane.id, cycleSortMode(lane.sort))}
+            onToggleArchive={() => onSetOpenArchive(appState.openArchive === lane.id ? null : lane.id)}
+            onRestoreArchived={onRestoreArchived}
+            onDelete={() => onDeleteLane(lane.id)}
+            onAddLane={onAddLane}
+            isLast={i === node.lanes.length - 1}
+            laneCount={node.lanes.length}
+            cardCount={cardCount}
+          />
+        );
+      })}
 
       {/* Saga lane click-zones (for adding cards by clicking empty space at a y position) */}
       {node.lanes.map((lane, i) =>
@@ -314,6 +414,8 @@ export function Board({
       {/* Saga cards (absolute at board level, ranked) */}
       {sagaCards.map((card, rankIdx) => {
         const isDragging = drag?.cardId === card.id;
+        const isNestTarget =
+          dropTarget?.kind === 'nest' && dropTarget.targetCardId === card.id;
         return (
           <Card
             key={card.id}
@@ -322,12 +424,14 @@ export function Board({
             laneIdx={node.lanes.findIndex(l => l.id === card.laneId)}
             rankIdx={rankIdx}
             isDragging={isDragging}
+            isNestTarget={isNestTarget}
             drag={isDragging ? drag : undefined}
             onHandlePointerDown={handlePointerDown}
             onZoomIn={onZoomIn}
             onSetStatus={onSetStatus}
             onRevertStatus={onRevertStatus}
             onSetTitle={onSetCardTitle}
+            onDelete={onDeleteCard}
           />
         );
       })}
@@ -367,6 +471,7 @@ export function Board({
                   onSetStatus={onSetStatus}
                   onRevertStatus={onRevertStatus}
                   onSetTitle={onSetCardTitle}
+                  onDelete={onDeleteCard}
                 />
               );
             })}

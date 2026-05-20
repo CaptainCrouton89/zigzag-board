@@ -1,6 +1,6 @@
 'use client';
 
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Card as CardType } from '@/lib/board/types';
 import { LANE_WIDTH, GAP, HEADER_H, RANK_STEP } from '@/lib/board/layout';
 
@@ -43,6 +43,14 @@ const GridIcon = () => (
   </svg>
 );
 
+const TrashIcon = () => (
+  <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+    <path d="M2.5 3.5h7" />
+    <path d="M4 3.5V2.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1" />
+    <path d="M3.5 3.5l.5 6.5a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1l.5-6.5" />
+  </svg>
+);
+
 const REST_TRANSITION =
   'top 220ms cubic-bezier(0.2,0.7,0.2,1), left 220ms cubic-bezier(0.2,0.7,0.2,1), box-shadow 140ms, transform 140ms';
 
@@ -59,12 +67,14 @@ interface Props {
   laneIdx: number;
   rankIdx: number;
   isDragging?: boolean;
+  isNestTarget?: boolean;
   drag?: DragRenderState | null;
   onHandlePointerDown: (e: React.PointerEvent, cardId: string) => void;
   onZoomIn: (cardId: string) => void;
   onSetStatus: (cardId: string) => void;
   onRevertStatus: (cardId: string) => void;
   onSetTitle: (cardId: string, title: string) => void;
+  onDelete: (cardId: string) => void;
 }
 
 export function Card({
@@ -73,17 +83,39 @@ export function Card({
   laneIdx,
   rankIdx,
   isDragging,
+  isNestTarget,
   drag,
   onHandlePointerDown,
   onZoomIn,
   onSetStatus,
   onRevertStatus,
   onSetTitle,
+  onDelete,
 }: Props) {
   const titleRef = useRef<HTMLDivElement>(null);
   const originalTitle = useRef(card.title);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const wasDraggingRef = useRef(false);
+
+  // Two-click delete: first click arms (button shifts to "Delete?"), second confirms.
+  // Disarms on any outside click, on a hover-leave, or on Escape — so the only way
+  // to delete is a deliberate second click while the chip is still visible.
+  const [armDelete, setArmDelete] = useState(false);
+  useEffect(() => {
+    if (!armDelete) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (cardRef.current?.contains(t)) return;
+      setArmDelete(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setArmDelete(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [armDelete]);
 
   // FLIP-on-drop: when isDragging flips off, re-place the card at the drop spot
   // via `transform: translate(...)` and animate back to identity. Transform avoids
@@ -152,6 +184,12 @@ export function Card({
         top: drag.clientY - drag.offY,
         width: LANE_WIDTH,
         zIndex: 1000,
+        // While dragging, the floating card sits at the cursor under
+        // `position: fixed`. Without this, `document.elementFromPoint(cursor)`
+        // would always return the dragged element first — blocking nest-target
+        // detection (which walks up from the element under the cursor looking
+        // for `[data-id]` on the card BELOW the dragged one).
+        pointerEvents: 'none',
       }
     : isSaga
     ? {
@@ -177,16 +215,24 @@ export function Card({
   }
 
   function handleTitleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === 'Escape') {
+    // Shift+Enter = newline (default browser behavior). Plain Enter blurs.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      (e.currentTarget as HTMLElement).blur();
+      return;
+    }
+    if (e.key === 'Escape') {
       e.preventDefault();
       (e.currentTarget as HTMLElement).blur();
     }
   }
 
   function handleTitleBlur(e: React.FocusEvent<HTMLDivElement>) {
-    const val = e.currentTarget.textContent?.trim();
+    // `innerText` preserves browser-inserted <br>/<div> newlines as \n; `textContent`
+    // strips them. Multi-line titles need the former.
+    const val = e.currentTarget.innerText?.trim();
     if (!val) {
-      e.currentTarget.textContent = originalTitle.current;
+      e.currentTarget.innerText = originalTitle.current;
     } else {
       originalTitle.current = val;
       onSetTitle(card.id, val);
@@ -205,15 +251,28 @@ export function Card({
         ...posStyle,
       }}
       className={[
-        'bg-surface border flex items-stretch overflow-hidden select-none',
+        'group bg-surface border flex items-stretch overflow-hidden select-none relative',
         card.status === 'doing'
           ? 'border-accent shadow-[0_0_0_2px_var(--accent-glow),var(--shadow-1)]'
           : 'border-border shadow-[var(--shadow-1)] hover:shadow-[var(--shadow-2)]',
         isDragging ? 'scale-[1.025] rotate-[0.4deg] cursor-grabbing shadow-[var(--shadow-2)]' : '',
         isSaga ? 'cursor-zoom-in' : '',
         card.status === 'doing' ? 'doing-card' : '',
+        isNestTarget ? 'outline-2 outline-dashed outline-accent outline-offset-[3px] z-[5]' : '',
       ].join(' ')}
     >
+      {/* Nest-target overlay: tints the whole card body + centered chip.
+          Lives INSIDE the card because the card uses `overflow-hidden`
+          (needed to clip the rounded-corner border and DOING stripe);
+          a -top:-10 chip would otherwise be cut off by the top edge. */}
+      {isNestTarget && (
+        <div className="absolute inset-0 flex items-center justify-center bg-accent/15 pointer-events-none z-[6]">
+          <span className="px-[8px] py-[2px] bg-accent text-white text-[10px] font-semibold uppercase tracking-wide rounded-full shadow-[var(--shadow-1)]">
+            ↳ Nest
+          </span>
+        </div>
+      )}
+
       {/* DOING accent stripe */}
       {card.status === 'doing' && (
         <div
@@ -249,12 +308,13 @@ export function Card({
           contentEditable
           suppressContentEditableWarning
           spellCheck={false}
+          title={card.title}
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
           onBlur={handleTitleBlur}
           onKeyDown={handleTitleKeyDown}
           className={[
-            'outline-none cursor-text break-words',
+            'outline-none cursor-text break-words whitespace-pre-wrap',
             isSaga
               ? 'text-[13.5px] font-medium leading-[1.32] text-text overflow-hidden line-clamp-2'
               : 'text-[12.5px] font-normal text-text leading-[1.25] flex-1',
@@ -276,6 +336,33 @@ export function Card({
               </span>
             )}
           </div>
+        )}
+      </div>
+
+      {/* Delete button (hover-revealed; two-click confirm) */}
+      <div
+        className={[
+          'flex-none flex items-center justify-center transition-opacity cursor-pointer',
+          isSaga ? 'w-[22px]' : 'w-[18px]',
+          armDelete
+            ? 'opacity-100 text-red-700 hover:bg-bg-soft'
+            : 'opacity-0 group-hover:opacity-100 text-text-dim hover:text-red-700 hover:bg-bg-soft',
+        ].join(' ')}
+        title={armDelete ? 'Click again to confirm — Esc to cancel' : 'Delete card'}
+        onPointerDown={e => e.stopPropagation()}
+        onClick={e => {
+          e.stopPropagation();
+          if (!armDelete) { setArmDelete(true); return; }
+          setArmDelete(false);
+          onDelete(card.id);
+        }}
+      >
+        {armDelete ? (
+          <span className={isSaga ? 'text-[9px] font-bold uppercase tracking-wide' : 'text-[8px] font-bold uppercase'}>
+            ✓
+          </span>
+        ) : (
+          <TrashIcon />
         )}
       </div>
 

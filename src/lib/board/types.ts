@@ -42,10 +42,16 @@ export type AppState = {
 export interface BoardCallbacks {
   onAddCard: (laneId: string, rank: number, title: string) => void;
   onMoveCard: (cardId: string, newLaneId: string, newRank: number) => void;
+  onNestCard: (cardId: string, targetCardId: string) => void;
+  onUnnestCard: (cardId: string, toPathIdx: number) => void;
   onSetStatus: (cardId: string) => void;
   onRevertStatus: (cardId: string) => void;
   onSetCardTitle: (cardId: string, title: string) => void;
+  onDeleteCard: (cardId: string) => void;
   onAddLane: () => void;
+  // Returns tri-state so the lane menu can render an inline "non-empty" hint
+  // without round-tripping through state. Mirrors mutations.deleteLane.
+  onDeleteLane: (laneId: string) => 'ok' | 'not_found' | 'non_empty';
   onToggleLaneType: (laneId: string) => void;
   onSetLaneTitle: (laneId: string, title: string) => void;
   onSetLaneStance: (laneId: string, stance: string) => void;

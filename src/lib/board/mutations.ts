@@ -284,6 +284,129 @@ export function moveCard(
   }, ORIGIN_LOCAL)
 }
 
+// ---------- NEST_CARD ----------
+// Move `cardId` from its current parent (at `path`) into another sibling card
+// `targetCardId`, becoming a child. Y.Map can't be re-parented in place, so the
+// implementation mirrors restoreArchived: toJSON → cardFromSnapshot → set into
+// the target's `cards` Y.Map → delete from the source's `cards` Y.Map.
+// If the target has no lanes yet, mint a default saga lane on it so the
+// nested card has a valid laneId.
+export function nestCard(
+  ydoc: Y.Doc, path: string[],
+  cardId: string, targetCardId: string,
+): void {
+  if (cardId === targetCardId) return
+  ydoc.transact(() => {
+    const root = ydoc.getMap('root') as Y.Map<unknown>
+    const parent = getNodeYMapByPath(root, path)
+    const cardYMap = findCardYMap(parent, cardId)
+    const targetYMap = findCardYMap(parent, targetCardId)
+    if (!cardYMap || !targetYMap) return
+
+    // Ensure target has a lanes Y.Map.
+    let targetLanes = targetYMap.get('lanes')
+    if (!(targetLanes instanceof Y.Map)) {
+      targetLanes = new Y.Map<Y.Map<unknown>>()
+      targetYMap.set('lanes', targetLanes)
+    }
+    const targetLanesMap = targetLanes as Y.Map<Y.Map<unknown>>
+
+    // Pick destination lane: first saga lane in target (order-sorted). If no
+    // lanes exist, mint a default saga lane so the dropped card has a home.
+    const sortedLanes = lanesSorted(targetYMap)
+    let destLane = sortedLanes.find(l => l.get('type') === 'saga') ?? null
+    if (!destLane) {
+      const laneId = `l-${nanoid(10)}`
+      const lane = new Y.Map<unknown>()
+      lane.set('id', laneId)
+      lane.set('title', 'New direction')
+      lane.set('type', 'saga' as LaneType)
+      lane.set('stance', '')
+      lane.set('order', generateKeyBetween(null, null))
+      targetLanesMap.set(laneId, lane)
+      destLane = lane
+    }
+    const destLaneId = String(destLane.get('id'))
+
+    // Compute fresh order against the target's saga siblings (global zigzag
+    // rank space for saga lanes — matches Board.tsx computeDropTarget).
+    const sibs = sagaSiblings(targetYMap)
+    const lastOrder = sibs.length ? String(sibs[sibs.length - 1].get('order')) : null
+    const newOrder = generateKeyBetween(lastOrder, null)
+
+    const snap = cardYMap.toJSON() as Record<string, unknown>
+    snap.laneId = destLaneId
+    snap.order = newOrder
+    const moved = cardFromSnapshot(snap)
+    // CRITICAL: read `snap.id`, NOT `moved.get('id')`. In Yjs 13.6, calling
+    // .get() on a Y.Map before it's been attached to a doc returns undefined
+    // (and logs "Invalid access" to stderr). The id we just set on `moved`
+    // via cardFromSnapshot is unreadable until attach; use the snapshot's id
+    // (which we copied into the moved Y.Map verbatim).
+    const movedId = String(snap.id)
+
+    let targetCards = targetYMap.get('cards')
+    if (!(targetCards instanceof Y.Map)) {
+      targetCards = new Y.Map<Y.Map<unknown>>()
+      targetYMap.set('cards', targetCards)
+    }
+    ;(targetCards as Y.Map<Y.Map<unknown>>).set(movedId, moved)
+
+    const parentCards = parent.get('cards')
+    if (parentCards instanceof Y.Map) {
+      ;(parentCards as Y.Map<Y.Map<unknown>>).delete(cardId)
+    }
+  }, ORIGIN_LOCAL)
+}
+
+// ---------- UNNEST_CARD ----------
+// Lift `cardId` out of its current parent (at `path`) and drop it into an
+// ancestor at `toPathIdx` (0 = root). The card lands in the ancestor's first
+// saga lane (falling back to the first lane overall if no saga lane exists).
+export function unnestCard(
+  ydoc: Y.Doc, path: string[],
+  cardId: string, toPathIdx: number,
+): void {
+  if (toPathIdx < 0 || toPathIdx >= path.length - 1) return
+  ydoc.transact(() => {
+    const root = ydoc.getMap('root') as Y.Map<unknown>
+    const parent = getNodeYMapByPath(root, path)
+    const ancestor = getNodeYMapByPath(root, path.slice(0, toPathIdx + 1))
+    if (parent === ancestor) return
+    const cardYMap = findCardYMap(parent, cardId)
+    if (!cardYMap) return
+
+    const sortedLanes = lanesSorted(ancestor)
+    if (sortedLanes.length === 0) return
+    const destLane = sortedLanes.find(l => l.get('type') === 'saga') ?? sortedLanes[0]
+    const destLaneId = String(destLane.get('id'))
+    const destIsSaga = destLane.get('type') === 'saga'
+
+    const sibs = destIsSaga ? sagaSiblings(ancestor) : siblingsByLane(ancestor, destLaneId)
+    const lastOrder = sibs.length ? String(sibs[sibs.length - 1].get('order')) : null
+    const newOrder = generateKeyBetween(lastOrder, null)
+
+    const snap = cardYMap.toJSON() as Record<string, unknown>
+    snap.laneId = destLaneId
+    snap.order = newOrder
+    const moved = cardFromSnapshot(snap)
+    // See nestCard: must read snap.id, not moved.get('id'), prior to attach.
+    const movedId = String(snap.id)
+
+    let ancestorCards = ancestor.get('cards')
+    if (!(ancestorCards instanceof Y.Map)) {
+      ancestorCards = new Y.Map<Y.Map<unknown>>()
+      ancestor.set('cards', ancestorCards)
+    }
+    ;(ancestorCards as Y.Map<Y.Map<unknown>>).set(movedId, moved)
+
+    const parentCards = parent.get('cards')
+    if (parentCards instanceof Y.Map) {
+      ;(parentCards as Y.Map<Y.Map<unknown>>).delete(cardId)
+    }
+  }, ORIGIN_LOCAL)
+}
+
 // ---------- SET_STATUS ----------
 export function setStatus(ydoc: Y.Doc, path: string[], cardId: string): void {
   ydoc.transact(() => {
@@ -337,6 +460,21 @@ export function setCardTitle(ydoc: Y.Doc, path: string[], cardId: string, title:
   }, ORIGIN_LOCAL)
 }
 
+// ---------- DELETE_CARD (hard delete; user-confirmed in UI) ----------
+// Web counterpart to server/src/lib/board/mutations.ts:223 removeCard. The
+// archive flow (setStatus → done) is for completed work; this is the escape
+// hatch for actual mistakes (typo'd card, wrong-lane drop, abandoned idea).
+// The card's nested subtree (its own cards/lanes/archived) is deleted with it —
+// matching server semantics.
+export function deleteCard(ydoc: Y.Doc, path: string[], cardId: string): void {
+  ydoc.transact(() => {
+    const parent = getNodeYMapByPath(ydoc.getMap('root') as Y.Map<unknown>, path)
+    const cards = parent.get('cards')
+    if (!(cards instanceof Y.Map)) return
+    ;(cards as Y.Map<Y.Map<unknown>>).delete(cardId)
+  }, ORIGIN_LOCAL)
+}
+
 // ---------- ADD_LANE ----------
 export function addLane(ydoc: Y.Doc, path: string[]): void {
   ydoc.transact(() => {
@@ -361,6 +499,35 @@ export function addLane(ydoc: Y.Doc, path: string[]): void {
     ;(lanes as Y.Map<Y.Map<unknown>>).set(id, lane)
     // Intentionally NO normalize-write (R6.10) — render-time pure transform.
   }, ORIGIN_LOCAL)
+}
+
+// ---------- DELETE_LANE (refuses non-empty; mirrors server `removeLane`) ----------
+// Returns the same tri-state the server does so the UI can show an inline
+// "archive cards first" message instead of silently no-op'ing. Refusing the
+// delete keeps stale laneId references from orphaning cards into a no-lane
+// limbo — the same invariant the web UI used to enforce by hiding delete.
+export function deleteLane(
+  ydoc: Y.Doc, path: string[], laneId: string,
+): 'ok' | 'not_found' | 'non_empty' {
+  let result: 'ok' | 'not_found' | 'non_empty' = 'not_found'
+  ydoc.transact(() => {
+    const parent = getNodeYMapByPath(ydoc.getMap('root') as Y.Map<unknown>, path)
+    const lanes = parent.get('lanes')
+    if (!(lanes instanceof Y.Map)) return
+    const lm = lanes as Y.Map<Y.Map<unknown>>
+    if (!lm.has(laneId)) return
+    const cards = parent.get('cards')
+    if (cards instanceof Y.Map) {
+      let nonEmpty = false
+      ;(cards as Y.Map<Y.Map<unknown>>).forEach(c => {
+        if (c.get('laneId') === laneId) nonEmpty = true
+      })
+      if (nonEmpty) { result = 'non_empty'; return }
+    }
+    lm.delete(laneId)
+    result = 'ok'
+  }, ORIGIN_LOCAL)
+  return result
 }
 
 // ---------- TOGGLE_LANE_TYPE ----------
@@ -489,12 +656,14 @@ export function restoreArchived(ydoc: Y.Doc, path: string[], archivedId: string)
     snap.order = newOrder
 
     const restored = cardFromSnapshot(snap)
+    // See nestCard: snap.id, not restored.get('id'), prior to attach.
+    const restoredId = String(snap.id)
     let cards = parent.get('cards')
     if (!(cards instanceof Y.Map)) {
       cards = new Y.Map<Y.Map<unknown>>()
       parent.set('cards', cards)
     }
-    ;(cards as Y.Map<Y.Map<unknown>>).set(String(restored.get('id')), restored)
+    ;(cards as Y.Map<Y.Map<unknown>>).set(restoredId, restored)
 
     arr.delete(foundIdx, 1)
   }, ORIGIN_LOCAL)

@@ -222,10 +222,14 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
               appState={appState}
               onAddCard={callbacks.onAddCard}
               onMoveCard={callbacks.onMoveCard}
+              onNestCard={callbacks.onNestCard}
+              onUnnestCard={callbacks.onUnnestCard}
               onSetStatus={callbacks.onSetStatus}
               onRevertStatus={callbacks.onRevertStatus}
               onSetCardTitle={callbacks.onSetCardTitle}
+              onDeleteCard={callbacks.onDeleteCard}
               onAddLane={callbacks.onAddLane}
+              onDeleteLane={callbacks.onDeleteLane}
               onToggleLaneType={callbacks.onToggleLaneType}
               onSetLaneTitle={callbacks.onSetLaneTitle}
               onSetLaneStance={callbacks.onSetLaneStance}

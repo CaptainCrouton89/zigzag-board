@@ -97,6 +97,16 @@ export function useBoard(orgId: string): { appState: AppState; callbacks: BoardC
     mutations.moveCard(ydoc, pathRef.current, cardId, newLaneId, newRank)
   }, [])
 
+  const onNestCard = useCallback<BoardCallbacks['onNestCard']>((cardId, targetCardId) => {
+    const ydoc = ydocRef.current; if (!ydoc) return
+    mutations.nestCard(ydoc, pathRef.current, cardId, targetCardId)
+  }, [])
+
+  const onUnnestCard = useCallback<BoardCallbacks['onUnnestCard']>((cardId, toPathIdx) => {
+    const ydoc = ydocRef.current; if (!ydoc) return
+    mutations.unnestCard(ydoc, pathRef.current, cardId, toPathIdx)
+  }, [])
+
   // M1 reducer-contract carryover: `setStatus` doing→done archives the card.
   // The reducer (state.ts:161) sets `cloned.openArchive = null` whenever a
   // card is archived. The Yjs mutation can't touch React-local `openArchive`
@@ -119,9 +129,24 @@ export function useBoard(orgId: string): { appState: AppState; callbacks: BoardC
     mutations.setCardTitle(ydoc, pathRef.current, cardId, title)
   }, [])
 
+  const onDeleteCard = useCallback<BoardCallbacks['onDeleteCard']>((cardId) => {
+    const ydoc = ydocRef.current; if (!ydoc) return
+    mutations.deleteCard(ydoc, pathRef.current, cardId)
+    // Mirror onSetStatus: if the lane's archive popover was open against this
+    // card's lane, the popover state can survive a deletion safely (popover
+    // filters by laneId, not cardId) so no setOpenArchive(null) needed here.
+  }, [])
+
   const onAddLane = useCallback<BoardCallbacks['onAddLane']>(() => {
     const ydoc = ydocRef.current; if (!ydoc) return
     mutations.addLane(ydoc, pathRef.current)
+  }, [])
+
+  const onDeleteLane = useCallback<BoardCallbacks['onDeleteLane']>((laneId) => {
+    const ydoc = ydocRef.current; if (!ydoc) return 'not_found'
+    const result = mutations.deleteLane(ydoc, pathRef.current, laneId)
+    if (result === 'ok') setOpenArchive(null)
+    return result
   }, [])
 
   const onToggleLaneType = useCallback<BoardCallbacks['onToggleLaneType']>((laneId) => {
@@ -185,13 +210,13 @@ export function useBoard(orgId: string): { appState: AppState; callbacks: BoardC
   }, [])
 
   const callbacks = useMemo<BoardCallbacks>(() => ({
-    onAddCard, onMoveCard, onSetStatus, onRevertStatus, onSetCardTitle,
-    onAddLane, onToggleLaneType, onSetLaneTitle, onSetLaneStance, onSetLaneSort,
+    onAddCard, onMoveCard, onNestCard, onUnnestCard, onSetStatus, onRevertStatus, onSetCardTitle, onDeleteCard,
+    onAddLane, onDeleteLane, onToggleLaneType, onSetLaneTitle, onSetLaneStance, onSetLaneSort,
     onAddPrinciple, onSetPrinciple, onRemovePrinciple, onRestoreArchived,
     onSetOpenArchive, onZoomIn, onZoomTo, onSetPath,
   }), [
-    onAddCard, onMoveCard, onSetStatus, onRevertStatus, onSetCardTitle,
-    onAddLane, onToggleLaneType, onSetLaneTitle, onSetLaneStance, onSetLaneSort,
+    onAddCard, onMoveCard, onNestCard, onUnnestCard, onSetStatus, onRevertStatus, onSetCardTitle, onDeleteCard,
+    onAddLane, onDeleteLane, onToggleLaneType, onSetLaneTitle, onSetLaneStance, onSetLaneSort,
     onAddPrinciple, onSetPrinciple, onRemovePrinciple, onRestoreArchived,
     onSetOpenArchive, onZoomIn, onZoomTo, onSetPath,
   ])
