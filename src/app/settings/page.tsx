@@ -504,10 +504,11 @@ function OrganizationPanel({ orgId, orgName, userId }: { orgId: string; orgName:
     window.location.assign('/')
   }
 
-  // Delete org (owner-only). Two-step armed pattern matches AccountPanel's
-  // delete flow; better-auth's organization/delete cascades to board +
-  // orgInviteCode via FK onDelete:'cascade' and nulls activeOrganizationId
-  // in the session, so the root gate routes to /onboarding on hard reload.
+  // Delete org (owner-only). better-auth's organization/delete cascades to
+  // board + orgInviteCode via FK onDelete:'cascade' and nulls the session's
+  // activeOrganizationId. After deletion we pick any remaining membership
+  // and set it active so the user lands on a board instead of /onboarding;
+  // if there are none, the root gate routes to /onboarding on reload.
   const [deleteOrgArmed, setDeleteOrgArmed] = useState(false)
   const [deleteOrgPending, setDeleteOrgPending] = useState(false)
   const [deleteOrgError, setDeleteOrgError] = useState<string | null>(null)
@@ -517,10 +518,28 @@ function OrganizationPanel({ orgId, orgName, userId }: { orgId: string; orgName:
     setDeleteOrgError(null)
     setDeleteOrgPending(true)
     const { error } = await authClient.organization.delete({ organizationId: orgId })
-    setDeleteOrgPending(false)
     if (error) {
+      setDeleteOrgPending(false)
       setDeleteOrgError(errorText(error, 'Could not delete organization'))
       return
+    }
+    // Best-effort switch into a remaining org. Failures here are non-fatal:
+    // the root gate handles a null activeOrganizationId by sending the user
+    // through onboarding, which is the safe fallback.
+    try {
+      const res = await fetch(`${API_URL}/api/org/me`, { credentials: 'include' })
+      if (res.ok) {
+        const body = (await res.json()) as { orgs?: Array<{ id: string }> }
+        const next = Array.isArray(body.orgs) ? body.orgs[0] : undefined
+        if (next) {
+          await fetch(`${API_URL}/api/org/${encodeURIComponent(next.id)}/select`, {
+            method: 'POST',
+            credentials: 'include',
+          })
+        }
+      }
+    } catch {
+      // fall through to reload
     }
     window.location.assign('/')
   }
