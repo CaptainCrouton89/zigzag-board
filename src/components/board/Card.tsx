@@ -256,7 +256,12 @@ export function Card({
         ...posStyle,
       }}
       className={[
-        'group bg-surface border flex items-stretch overflow-hidden select-none relative',
+        // When isNestTarget, drop overflow-hidden so the `-top:-10` badge isn't
+        // clipped. The only thing overflow-hidden was protecting is the DOING
+        // stripe's left corner against the rounded border — a brief visual blip
+        // during nest hover is an acceptable trade for the visible badge.
+        'group bg-surface border flex items-stretch select-none relative',
+        isNestTarget ? 'overflow-visible' : 'overflow-hidden',
         card.status === 'doing'
           ? 'border-accent shadow-[0_0_0_2px_var(--accent-glow),var(--shadow-1)]'
           : 'border-border shadow-[var(--shadow-1)] hover:shadow-[var(--shadow-2)]',
@@ -266,15 +271,11 @@ export function Card({
         isNestTarget ? 'outline-2 outline-dashed outline-accent outline-offset-[3px] z-[5]' : '',
       ].join(' ')}
     >
-      {/* Nest-target overlay: tints the whole card body + centered chip.
-          Lives INSIDE the card because the card uses `overflow-hidden`
-          (needed to clip the rounded-corner border and DOING stripe);
-          a -top:-10 chip would otherwise be cut off by the top edge. */}
       {isNestTarget && (
-        <div className="absolute inset-0 flex items-center justify-center bg-accent/15 pointer-events-none z-[6]">
-          <span className="px-[8px] py-[2px] bg-accent text-white text-[10px] font-semibold uppercase tracking-wide rounded-full shadow-[var(--shadow-1)]">
-            ↳ Nest
-          </span>
+        <div
+          className="absolute -top-[4px] left-1/2 -translate-x-1/2 -translate-y-1/2 px-[8px] py-[2px] bg-accent text-white text-[10px] font-semibold uppercase tracking-wide rounded-full shadow-[var(--shadow-1)] pointer-events-none z-[6] whitespace-nowrap"
+        >
+          ↳ Nest
         </div>
       )}
 
