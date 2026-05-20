@@ -504,6 +504,27 @@ function OrganizationPanel({ orgId, orgName, userId }: { orgId: string; orgName:
     window.location.assign('/')
   }
 
+  // Delete org (owner-only). Two-step armed pattern matches AccountPanel's
+  // delete flow; better-auth's organization/delete cascades to board +
+  // orgInviteCode via FK onDelete:'cascade' and nulls activeOrganizationId
+  // in the session, so the root gate routes to /onboarding on hard reload.
+  const [deleteOrgArmed, setDeleteOrgArmed] = useState(false)
+  const [deleteOrgPending, setDeleteOrgPending] = useState(false)
+  const [deleteOrgError, setDeleteOrgError] = useState<string | null>(null)
+
+  async function onDeleteOrg() {
+    if (deleteOrgPending) return
+    setDeleteOrgError(null)
+    setDeleteOrgPending(true)
+    const { error } = await authClient.organization.delete({ organizationId: orgId })
+    setDeleteOrgPending(false)
+    if (error) {
+      setDeleteOrgError(errorText(error, 'Could not delete organization'))
+      return
+    }
+    window.location.assign('/')
+  }
+
   // Invite link
   const [inviteUrl, setInviteUrl] = useState<string | null>(null)
   const [inviteError, setInviteError] = useState<string | null>(null)
@@ -721,6 +742,45 @@ function OrganizationPanel({ orgId, orgName, userId }: { orgId: string; orgName:
             {leavePending ? 'Leaving…' : 'Leave organization'}
           </button>
           {leaveError && <p role="alert" className="text-[12px] text-red-700 mt-2">{leaveError}</p>}
+        </Section>
+      )}
+
+      {isOwner && (
+        <Section title="Delete organization" description="Permanently deletes the organization, its board, and removes all members. This cannot be undone.">
+          {!deleteOrgArmed ? (
+            <button
+              type="button"
+              onClick={() => setDeleteOrgArmed(true)}
+              className="px-3 py-2 rounded border border-red-700 text-red-700 text-[13px] hover:bg-red-50"
+            >
+              Delete organization
+            </button>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className="text-[12.5px] text-text-muted">
+                This will permanently delete <span className="font-medium text-text">{orgName}</span> and remove all member access.
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onDeleteOrg}
+                  disabled={deleteOrgPending}
+                  className="px-3 py-2 rounded bg-red-700 text-white text-[13px] font-medium disabled:opacity-60"
+                >
+                  {deleteOrgPending ? 'Deleting…' : 'Permanently delete organization'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setDeleteOrgArmed(false); setDeleteOrgError(null) }}
+                  disabled={deleteOrgPending}
+                  className="px-3 py-2 rounded border border-border bg-bg text-text-muted text-[13px] hover:text-text"
+                >
+                  Cancel
+                </button>
+              </div>
+              {deleteOrgError && <p role="alert" className="text-[12px] text-red-700">{deleteOrgError}</p>}
+            </div>
+          )}
         </Section>
       )}
     </>
