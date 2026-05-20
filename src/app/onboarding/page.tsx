@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
+import { authClient } from '@/lib/auth-client'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL
 if (!API_URL) {
@@ -13,6 +14,14 @@ type Created = { inviteUrl: string } | null
 
 export default function OnboardingPage() {
   const router = useRouter()
+  // The server endpoints below mutate session.activeOrganizationId via
+  // better-auth's server API, but the client-side session atom only auto-
+  // refreshes through atomListeners on authClient.organization.* paths
+  // (client.mjs:65-93). Direct fetch to our own /api/org bypasses those, so
+  // useSession() data stays stale — and RootPage redirects right back to
+  // /onboarding when activeOrganizationId still reads null. Capture refetch
+  // here and await it before any router.push('/').
+  const { refetch } = authClient.useSession()
 
   // Create-org panel state
   const [orgName, setOrgName] = useState('')
@@ -69,6 +78,11 @@ export default function OnboardingPage() {
         return
       }
       setCreated({ inviteUrl: body.inviteUrl })
+      // Kick off a session refetch so the atom has the new
+      // activeOrganizationId before the user clicks "Go to board". Fire-and-
+      // forget here is fine — the button's onClick awaits a fresh refetch
+      // too, so this is a latency optimization, not a correctness gate.
+      void refetch()
     } catch {
       setCreateError('Network error')
     } finally {
@@ -127,6 +141,10 @@ export default function OnboardingPage() {
         setJoinError(body.error ?? 'Could not join organization')
         return
       }
+      // Refresh session atom so RootPage sees the new activeOrganizationId
+      // and doesn't bounce back here. See refetch note at the top of this
+      // component for the underlying reason.
+      await refetch()
       router.push('/')
     } catch {
       setJoinError('Network error')
@@ -193,7 +211,14 @@ export default function OnboardingPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => router.push('/')}
+                  onClick={async () => {
+                    // Belt-and-suspenders: the post-create fire-and-forget
+                    // refetch usually completes well before the user clicks
+                    // here, but await one more time so navigation cannot
+                    // race the atom update and bounce back to /onboarding.
+                    await refetch()
+                    router.push('/')
+                  }}
                   className="px-3 py-2 rounded bg-accent text-white text-sm font-medium"
                 >
                   Go to board

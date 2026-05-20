@@ -23,7 +23,7 @@ interface InvitePageProps {
 export default function InvitePage({ params }: InvitePageProps) {
   const { code } = use(params)
   const router = useRouter()
-  const { data, isPending } = authClient.useSession()
+  const { data, isPending, refetch } = authClient.useSession()
   const [state, setState] = useState<AcceptState>('pending')
   // Strict-mode double-effect guard — the accept POST is non-idempotent
   // (well, server-side it IS idempotent per Phase-3 R4.1.4, but firing twice
@@ -65,6 +65,12 @@ export default function InvitePage({ params }: InvitePageProps) {
         }
         // Phase-3 returns 200 with { organizationId } on both fresh-accept
         // and idempotent already-member. Either way: drop on the board.
+        // Refresh the session atom first — the server set
+        // activeOrganizationId on the cookie, but the atom doesn't auto-
+        // refresh for direct fetches (only authClient.organization.* paths
+        // trigger atomListeners in better-auth's organization client), so
+        // RootPage would otherwise read null and bounce back to /onboarding.
+        await refetch()
         router.push('/')
       } catch {
         if (!cancelled) setState('error')
