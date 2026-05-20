@@ -291,6 +291,13 @@ export function OrgSwitcher({ activeOrgId, activeOrgName }: Props) {
           )}
 
           <Link
+            href="/settings?tab=organization"
+            onClick={close}
+            className="px-2 py-[6px] rounded-md text-left text-[12.5px] text-text-muted hover:bg-bg-soft hover:text-text"
+          >
+            Manage organization →
+          </Link>
+          <Link
             href="/onboarding"
             onClick={close}
             className="px-2 py-[6px] rounded-md text-left text-[12.5px] text-text-muted hover:bg-bg-soft hover:text-text"

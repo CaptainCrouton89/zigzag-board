@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/board/Sidebar'
 import { Breadcrumb } from '@/components/board/Breadcrumb'
 import { Board } from '@/components/board/Board'
 import { OrgSwitcher } from '@/components/board/OrgSwitcher'
+import { IdentityMenu } from '@/components/board/IdentityMenu'
 import { useBoard } from '@/lib/board/useBoard'
 import { getNodeByPath } from '@/lib/board/state'
 import { authClient } from '@/lib/auth-client'
@@ -166,37 +167,14 @@ export default function BoardClient({ orgId, userEmail }: BoardClientProps) {
     <div className="flex flex-col h-screen overflow-hidden">
       <header className="px-9 py-3 border-b border-border flex items-center justify-between gap-8 bg-bg">
         <Breadcrumb root={appState.root} path={appState.path} orgName={orgName} onNavigate={handleNavigate} />
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4 text-[11px] text-text-muted">
-            <span className="inline-flex items-center gap-[6px]">
-              <span className="inline-block w-[22px] h-[2px] rounded bg-accent" />
-              priority weave (sagas only)
-            </span>
-            <span className="inline-flex items-center gap-[6px]">
-              <kbd className="font-[inherit] text-[10.5px] px-[5px] py-[1px] rounded bg-bg-soft border border-border text-text">esc</kbd>
-              zoom out
-            </span>
-            <span>click card → zoom in</span>
-          </div>
+        <div className="flex items-center gap-4">
+          <span className="inline-flex items-center gap-[6px] text-[11px] text-text-muted">
+            <span aria-hidden className="inline-block w-[22px] h-[2px] rounded bg-accent" />
+            priority weave
+          </span>
           <OrgSwitcher activeOrgId={orgId} activeOrgName={orgName} />
-          {/* M-1: min-w-0 lets the truncating <span> shrink below content width
-              on narrow viewports; without it, `truncate max-w-[160px]` is
-              ineffective inside a flex parent and the email pushes Sign-out
-              off-screen. */}
-          <div className="flex items-center gap-2 pl-4 border-l border-border min-w-0">
-            <span
-              className="text-[11px] text-text-muted truncate max-w-[160px]"
-              title={userEmail}
-            >
-              {userEmail}
-            </span>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="text-[11px] text-text-muted hover:text-text underline-offset-2 hover:underline"
-            >
-              Sign out
-            </button>
+          <div className="pl-3 border-l border-border">
+            <IdentityMenu userEmail={userEmail} onSignOut={handleSignOut} />
           </div>
         </div>
       </header>
