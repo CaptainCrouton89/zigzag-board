@@ -1,6 +1,6 @@
 {
   "name": "@crouton-kit/zigzag",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Command-line interface for the Zigzag collaborative board. Designed so an AI agent can read and modify a user's board on their behalf.",
   "type": "module",
   "license": "MIT",
