@@ -1,0 +1,1 @@
+- `auth.api.listOrganizations` silently drops `member.role` (adapter.mjs:345-356 maps each row to `member.organization`, discarding the field). Use a direct Drizzle join when `role` is needed — the auth API call looks equivalent but returns no role.
