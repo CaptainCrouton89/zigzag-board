@@ -5,14 +5,14 @@
   "type": "module",
   "license": "MIT",
   "author": "Silas Rhyneer",
-  "homepage": "https://github.com/CaptainCrouton89/zigzagboard#readme",
+  "homepage": "https://github.com/CaptainCrouton89/zigzag-board#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/CaptainCrouton89/zigzagboard.git",
+    "url": "git+https://github.com/CaptainCrouton89/zigzag-board.git",
     "directory": "cli"
   },
   "bugs": {
-    "url": "https://github.com/CaptainCrouton89/zigzagboard/issues"
+    "url": "https://github.com/CaptainCrouton89/zigzag-board/issues"
   },
   "keywords": [
     "zigzag",
