@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation'
 import { authClient } from '@/lib/auth-client'
 import BoardClient from '@/components/BoardClient'
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+if (!API_URL) {
+  // Matches auth-client.ts eager-validation policy.
+  throw new Error('NEXT_PUBLIC_API_URL is not set')
+}
+
 // Phase 6 root gate — client-side per design.md §5.1.
 //
 // Rationale (locked decision; do not re-litigate): better-auth sets the
@@ -42,9 +48,37 @@ export default function RootPage() {
       router.replace('/login')
       return
     }
-    if (data.session.activeOrganizationId == null) {
-      router.replace('/onboarding')
-    }
+    if (data.session.activeOrganizationId != null) return
+    // activeOrgId is null but the user may still have memberships — e.g.
+    // they deleted their previously-active org. Pick one and reload before
+    // falling through to /onboarding, otherwise they're stuck creating a
+    // new org despite already belonging to others.
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/org/me`, { credentials: 'include' })
+        if (cancelled) return
+        if (res.ok) {
+          const body = (await res.json()) as { orgs?: Array<{ id: string }> }
+          const next = Array.isArray(body.orgs) ? body.orgs[0] : undefined
+          if (next) {
+            const sel = await fetch(`${API_URL}/api/org/${encodeURIComponent(next.id)}/select`, {
+              method: 'POST',
+              credentials: 'include',
+            })
+            if (cancelled) return
+            if (sel.ok) {
+              window.location.assign('/')
+              return
+            }
+          }
+        }
+      } catch {
+        // fall through to onboarding
+      }
+      if (!cancelled) router.replace('/onboarding')
+    })()
+    return () => { cancelled = true }
   }, [isPending, data, router])
 
   if (isPending || data === null) {
