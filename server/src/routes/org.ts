@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { nanoid } from 'nanoid'
 import { APIError } from 'better-auth/api'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { auth } from '../auth.js'
 import { db } from '../db/client.js'
 import { board, orgInviteCode, member, organization } from '../db/schema.js'
@@ -101,6 +101,53 @@ app.get('/me', async (c) => {
     orgs,
     activeOrganizationId: c.var.session.activeOrganizationId,
   })
+})
+
+// Helper: load the caller's membership in an org. Returns null when the user
+// is not a member, so callers can 403 with a consistent JSON error body. Used
+// by the invite-link endpoints (owner-only) and any future role-gated routes.
+async function getMembership(userId: string, organizationId: string) {
+  const rows = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.userId, userId), eq(member.organizationId, organizationId)))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+// GET current invite URL for an org (owner-only). Returns the same `inviteUrl`
+// shape the create endpoint returns so the frontend can reuse a single copy/
+// share component.
+app.get('/:id/invite', async (c) => {
+  const id = c.req.param('id')
+  const m = await getMembership(c.var.user.id, id)
+  if (!m) return c.json({ error: 'not a member' }, 403)
+  if (m.role !== 'owner') return c.json({ error: 'owner only' }, 403)
+  const rows = await db.select({ code: orgInviteCode.code })
+    .from(orgInviteCode).where(eq(orgInviteCode.organizationId, id)).limit(1)
+  if (rows.length === 0) return c.json({ error: 'no invite' }, 404)
+  return c.json({ inviteUrl: `${WEB_ORIGIN}/invite/${rows[0].code}` })
+})
+
+// Rotate the invite code (owner-only). Single code per org (PK on
+// organizationId in schema), so UPDATE the existing row. Old links 404
+// immediately, which is the point — call this when a link leaks.
+app.post('/:id/invite/regenerate', async (c) => {
+  const id = c.req.param('id')
+  const m = await getMembership(c.var.user.id, id)
+  if (!m) return c.json({ error: 'not a member' }, 403)
+  if (m.role !== 'owner') return c.json({ error: 'owner only' }, 403)
+  const newCode = nanoid(12)
+  const updated = await db.update(orgInviteCode)
+    .set({ code: newCode })
+    .where(eq(orgInviteCode.organizationId, id))
+    .returning({ code: orgInviteCode.code })
+  if (updated.length === 0) {
+    // No existing row — create one. Covers orgs that pre-date this endpoint
+    // or had their row deleted out-of-band.
+    await db.insert(orgInviteCode).values({ organizationId: id, code: newCode })
+  }
+  return c.json({ inviteUrl: `${WEB_ORIGIN}/invite/${newCode}` })
 })
 
 // R3.3 — set active org; non-member → 403
