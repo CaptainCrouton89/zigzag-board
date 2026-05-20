@@ -75,6 +75,7 @@ interface Props {
   onRevertStatus: (cardId: string) => void;
   onSetTitle: (cardId: string, title: string) => void;
   onDelete: (cardId: string) => void;
+  onCreateBelow?: (cardId: string) => void;
 }
 
 export function Card({
@@ -91,6 +92,7 @@ export function Card({
   onRevertStatus,
   onSetTitle,
   onDelete,
+  onCreateBelow,
 }: Props) {
   const titleRef = useRef<HTMLDivElement>(null);
   const originalTitle = useRef(card.title);
@@ -215,10 +217,13 @@ export function Card({
   }
 
   function handleTitleKeyDown(e: React.KeyboardEvent) {
-    // Shift+Enter = newline (default browser behavior). Plain Enter blurs.
+    // Shift+Enter = newline (default browser behavior). Plain Enter blurs
+    // (committing the title via handleTitleBlur) and opens a fresh new-card
+    // input directly below for chained capture.
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       (e.currentTarget as HTMLElement).blur();
+      onCreateBelow?.(card.id);
       return;
     }
     if (e.key === 'Escape') {

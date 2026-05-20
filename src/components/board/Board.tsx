@@ -291,8 +291,48 @@ export function Board({
     }
   }
 
+  // Enter-to-chain: commit current value and open a fresh input one slot below.
+  // Empty value (just Enter) closes the input like a normal commit would.
+  function commitAndChainNewCard() {
+    const cur = newCard;
+    const input = newCardInputRef.current;
+    const val = input?.value.trim();
+    if (!val || !cur) {
+      setNewCard(null);
+      return;
+    }
+    onAddCard(cur.laneId, cur.rank, val);
+    if (input) input.value = '';
+    setNewCard({ laneId: cur.laneId, rank: cur.rank + 1 });
+    setTimeout(() => newCardInputRef.current?.focus(), 0);
+  }
+
   function cancelNewCard() {
     setNewCard(null);
+  }
+
+  function handleCreateBelow(cardId: string) {
+    const card = node.cards.find(c => c.id === cardId);
+    if (!card) return;
+    const lane = node.lanes.find(l => l.id === card.laneId);
+    if (!lane) return;
+    // Rank space matches addCard's: global saga order for saga lanes, per-lane
+    // order-field index for backlog. node.cards is pre-sorted by order in the
+    // snapshot, so filter-then-index gives the correct insertion rank.
+    let rank: number;
+    if (lane.type === 'saga') {
+      const sagas = node.cards.filter(c => sagaCardIds.has(c.id));
+      const idx = sagas.findIndex(c => c.id === cardId);
+      if (idx < 0) return;
+      rank = idx + 1;
+    } else {
+      const backlog = node.cards.filter(c => c.laneId === card.laneId);
+      const idx = backlog.findIndex(c => c.id === cardId);
+      if (idx < 0) return;
+      rank = idx + 1;
+    }
+    setNewCard({ laneId: card.laneId, rank });
+    setTimeout(() => newCardInputRef.current?.focus(), 0);
   }
 
   // Board dimensions — based on saga rank count; backlog lanes flow naturally.
@@ -432,6 +472,7 @@ export function Board({
             onRevertStatus={onRevertStatus}
             onSetTitle={onSetCardTitle}
             onDelete={onDeleteCard}
+            onCreateBelow={handleCreateBelow}
           />
         );
       })}
@@ -472,6 +513,7 @@ export function Board({
                   onRevertStatus={onRevertStatus}
                   onSetTitle={onSetCardTitle}
                   onDelete={onDeleteCard}
+                  onCreateBelow={handleCreateBelow}
                 />
               );
             })}
@@ -510,7 +552,7 @@ export function Board({
             }}
             onBlur={commitNewCard}
             onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitNewCard(); }
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitAndChainNewCard(); }
               if (e.key === 'Escape') { e.preventDefault(); cancelNewCard(); }
             }}
           />
