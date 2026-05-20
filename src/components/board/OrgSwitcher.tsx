@@ -54,13 +54,17 @@ export function OrgSwitcher({ activeOrgId, activeOrgName }: Props) {
   }, [])
 
   // Anchor the panel below the trigger; track on resize/scroll.
+  // Right-align to the trigger (panel width 280) so it doesn't overflow the
+  // viewport when the trigger sits near the right edge of the header. Matches
+  // IdentityMenu's `rect.right - 220` pattern.
   useEffect(() => {
     if (!open) return
     const update = () => {
       const el = triggerRef.current
       if (!el) return
       const rect = el.getBoundingClientRect()
-      setPos({ left: rect.left, top: rect.bottom + 6 })
+      const left = Math.max(8, Math.min(rect.right - 280, window.innerWidth - 280 - 8))
+      setPos({ left, top: rect.bottom + 6 })
     }
     update()
     window.addEventListener('resize', update)
