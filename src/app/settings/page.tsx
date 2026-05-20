@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { Suspense, useCallback, useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { authClient } from '@/lib/auth-client'
@@ -35,6 +35,18 @@ function memberDisplayName(m: MemberRow): string {
 }
 
 export default function SettingsPage() {
+  // useSearchParams() in SettingsInner triggers Next's CSR-bailout error at
+  // build time unless the consumer is rendered under a Suspense boundary
+  // (Next.js: "missing-suspense-with-csr-bailout"). Mirrors the same wrap
+  // in (auth)/login and (auth)/signup.
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-bg" />}>
+      <SettingsInner />
+    </Suspense>
+  )
+}
+
+function SettingsInner() {
   const router = useRouter()
   const params = useSearchParams()
   const tabParam = params.get('tab')
